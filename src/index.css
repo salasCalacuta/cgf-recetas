@@ -1,0 +1,35 @@
+:root {
+  --bg: #ffffff;
+  --blue: #0b5ed7;
+  --text: var(--blue);
+  --text-muted: rgba(11, 94, 215, 0.7);
+  --border: rgba(11, 94, 215, 0.22);
+  --card: rgba(11, 94, 215, 0.045);
+  --card-strong: rgba(11, 94, 215, 0.085);
+  --shadow: rgba(11, 94, 215, 0.18) 0 14px 28px -18px;
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  color-scheme: light;
+  font: 16px/145% var(--sans);
+  letter-spacing: 0.15px;
+  color: var(--text);
+  background: var(--bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+code {
+  font-family: var(--mono);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 2px 6px;
+}
