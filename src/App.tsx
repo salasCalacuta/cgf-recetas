@@ -7,6 +7,7 @@ type Product = {
   description: string
   unit: string
   groupCode?: string
+  rubro?: string
   kind: 'mp' | 'pt' | 'both' | 'unknown'
   price1: number
   price2: number
@@ -31,7 +32,28 @@ type Recipe = {
   lines: RecipeLine[]
 }
 
-type Tab = 'productos' | 'recetas'
+type Tab = 'productos' | 'recetas' | 'parametros'
+
+type AppSettings = {
+  priceListNumber: number
+  finishedIdMode: 'agrupacion' | 'rubro'
+  finishedIdCode: string
+  mpIdCode: string
+  exportFolderPath: string
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  priceListNumber: 1,
+  finishedIdMode: 'agrupacion',
+  finishedIdCode: 'G003',
+  mpIdCode: 'G001',
+  exportFolderPath: '',
+}
+
+function clampPriceList(n: number) {
+  if (!Number.isFinite(n)) return 1
+  return Math.min(6, Math.max(1, Math.round(n)))
+}
 
 type ParsedPrnResult = {
   imported: Product[]
@@ -75,6 +97,29 @@ function readStorage<T>(key: string, fallback: T): T {
   }
 }
 
+function loadInitialSettings(): AppSettings {
+  const saved = readStorage<Partial<AppSettings>>('costorecetas-v2-settings', {})
+  const legacyList = readStorage<number>('costorecetas-v2-activePriceList', 1)
+  return {
+    ...DEFAULT_SETTINGS,
+    ...saved,
+    priceListNumber: clampPriceList(
+      typeof saved.priceListNumber === 'number' ? saved.priceListNumber : legacyList,
+    ),
+    finishedIdMode: saved.finishedIdMode === 'rubro' ? 'rubro' : 'agrupacion',
+    finishedIdCode:
+      typeof saved.finishedIdCode === 'string' && saved.finishedIdCode.trim()
+        ? saved.finishedIdCode.trim()
+        : DEFAULT_SETTINGS.finishedIdCode,
+    mpIdCode:
+      typeof saved.mpIdCode === 'string' && saved.mpIdCode.trim()
+        ? saved.mpIdCode.trim()
+        : DEFAULT_SETTINGS.mpIdCode,
+    exportFolderPath:
+      typeof saved.exportFolderPath === 'string' ? saved.exportFolderPath : '',
+  }
+}
+
 function normalizeProducts(raw: unknown): Product[] {
   if (!Array.isArray(raw)) return []
   return raw
@@ -86,6 +131,7 @@ function normalizeProducts(raw: unknown): Product[] {
       description: String(p.description),
       unit: typeof p.unit === 'string' ? p.unit : '',
       groupCode: typeof p.groupCode === 'string' ? p.groupCode : undefined,
+      rubro: typeof p.rubro === 'string' ? p.rubro : undefined,
       kind:
         p.kind === 'mp' || p.kind === 'pt' || p.kind === 'both' || p.kind === 'unknown'
           ? p.kind
@@ -104,16 +150,36 @@ function normalizeProducts(raw: unknown): Product[] {
     .filter((p) => Number.isFinite(p.price1) && Number.isFinite(p.equivalenceQty))
 }
 
-function kindFromGroupCode(groupCode?: string): Product['kind'] {
-  if (!groupCode) return 'unknown'
-  const normalized = groupCode.trim().toUpperCase()
-  if (normalized === 'G001') return 'mp'
-  if (normalized === 'G003') return 'pt'
+function classifyProductFromSettings(p: Product, s: AppSettings): Product['kind'] {
+  if (s.finishedIdMode === 'agrupacion') {
+    const g = (p.groupCode || '').trim().toUpperCase()
+    const pt = s.finishedIdCode.trim().toUpperCase()
+    const mp = s.mpIdCode.trim().toUpperCase()
+    if (g && pt && g === pt) return 'pt'
+    if (g && mp && g === mp) return 'mp'
+    return 'unknown'
+  }
+  const r = (p.rubro || '').trim().toUpperCase()
+  const pt = s.finishedIdCode.trim().toUpperCase()
+  const mp = s.mpIdCode.trim().toUpperCase()
+  if (r && pt && r === pt) return 'pt'
+  if (r && mp && r === mp) return 'mp'
   return 'unknown'
 }
 
-function inferHasClassification(list: Product[]) {
-  return list.some((p) => p.kind === 'mp' || p.kind === 'pt' || p.kind === 'both')
+function applyClassificationAfterImport(productsIn: Product[], previousProducts: Product[], s: AppSettings): Product[] {
+  const previousByCode = new Map(previousProducts.map((p) => [p.code, p]))
+  return productsIn.map((p) => {
+    const prev = previousByCode.get(p.code)
+    const computed = classifyProductFromSettings(p, s)
+    let kind: Product['kind'] =
+      computed !== 'unknown'
+        ? computed
+        : prev?.kind && prev.kind !== 'unknown'
+          ? prev.kind
+          : 'unknown'
+    return { ...p, kind }
+  })
 }
 
 function normalizeRecipes(raw: unknown): Recipe[] {
@@ -172,7 +238,8 @@ function parsePrn(contents: string, previousProducts: Product[]): ParsedPrnResul
       description: description.trim(),
       unit: unitRaw.trim(),
       groupCode: prev?.groupCode,
-      kind: prev?.kind ?? 'unknown',
+      rubro: prev?.rubro,
+      kind: 'unknown',
       price1: parseNumberEs(price1Raw),
       price2: parseNumberEs(price2Raw),
       price3: parseNumberEs(price3Raw),
@@ -186,7 +253,11 @@ function parsePrn(contents: string, previousProducts: Product[]): ParsedPrnResul
   return { imported: out, headerLine }
 }
 
-function parseTabFile(contents: string, previousProducts: Product[]): ParsedPrnResult {
+function parseTabFile(
+  contents: string,
+  previousProducts: Product[],
+  finishedIdMode: AppSettings['finishedIdMode'],
+): ParsedPrnResult {
   const lines = contents.split(/\r?\n/)
   const headerLine = lines[5] ?? lines[0] ?? ''
   const out: Product[] = []
@@ -203,7 +274,11 @@ function parseTabFile(contents: string, previousProducts: Product[]): ParsedPrnR
 
     const code = cols[0]
     const description = cols[1] ?? ''
-    const groupCode = cols[2] || undefined
+    const prev = previousByCode.get(code)
+    const third = cols[2]?.trim() || ''
+    const groupCode =
+      finishedIdMode === 'agrupacion' ? (third || prev?.groupCode) : undefined
+    const rubro = finishedIdMode === 'rubro' ? (third || prev?.rubro) : undefined
     const unit = cols[3] ?? ''
 
     const prices = cols.slice(4, 10).map((p) => parseNumberEs(p))
@@ -218,16 +293,14 @@ function parseTabFile(contents: string, previousProducts: Product[]): ParsedPrnR
 
     if (!code || !description) continue
 
-    const prev = previousByCode.get(code)
-    const inferredKind = kindFromGroupCode(groupCode)
-
     out.push({
       id: prev?.id ?? uid(),
       code,
       description,
       unit,
       groupCode,
-      kind: prev?.kind && prev.kind !== 'unknown' ? prev.kind : inferredKind,
+      rubro,
+      kind: 'unknown',
       price1: Number.isFinite(price1) ? price1 : 0,
       price2: Number.isFinite(price2) ? price2 : 0,
       price3: Number.isFinite(price3) ? price3 : 0,
@@ -282,6 +355,47 @@ function computeRecipeSummary(params: {
   return { totalCost, unitCost, suggestedPrice, marginAmount }
 }
 
+function sanitizeExportBaseName(raw: string) {
+  return raw.trim().replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ') || 'precios'
+}
+
+async function saveExportTxt(params: {
+  baseName: string
+  contents: string
+  exportFolderPath: string
+  setMsg: (s: string) => void
+}) {
+  const safeBase = sanitizeExportBaseName(params.baseName)
+  const electron = typeof window !== 'undefined' ? window.costorecetasElectron : undefined
+  const folder = params.exportFolderPath.trim()
+  if (electron && folder) {
+    const res = await electron.saveExportFile(folder, `${safeBase}.txt`, params.contents)
+    if (res.ok && res.path) {
+      params.setMsg(`Exportado: ${res.path}`)
+      return
+    }
+    params.setMsg(
+      `No se pudo guardar en la carpeta (${res.error ?? 'error'}). Se descarga el archivo.`,
+    )
+  }
+  const blob = new Blob([params.contents], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${safeBase}.txt`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  if (!electron || !folder) {
+    params.setMsg(
+      electron && !folder
+        ? 'Archivo descargado. Podés definir la carpeta en Parámetros para guardar directo en disco.'
+        : 'Archivo descargado.',
+    )
+  }
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('productos')
   const [products, setProducts] = useState<Product[]>(() =>
@@ -291,9 +405,7 @@ function App() {
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>('')
   const [exportSelection, setExportSelection] = useState<Record<string, boolean>>({})
   const [productSearch, setProductSearch] = useState('')
-  const [activePriceList, setActivePriceList] = useState<number>(
-    () => readStorage('costorecetas-v2-activePriceList', 1),
-  )
+  const [settings, setSettings] = useState<AppSettings>(() => loadInitialSettings())
   const [exportFileName, setExportFileName] = useState<string>(
     () => readStorage('costorecetas-v2-exportFileName', 'precios'),
   )
@@ -310,12 +422,21 @@ function App() {
   }, [recipes])
 
   useEffect(() => {
-    localStorage.setItem('costorecetas-v2-activePriceList', JSON.stringify(activePriceList))
-  }, [activePriceList])
+    localStorage.setItem('costorecetas-v2-settings', JSON.stringify(settings))
+  }, [settings])
 
   useEffect(() => {
     localStorage.setItem('costorecetas-v2-exportFileName', JSON.stringify(exportFileName))
   }, [exportFileName])
+
+  useEffect(() => {
+    setProducts((prev) =>
+      prev.map((p) => {
+        const k = classifyProductFromSettings(p, settings)
+        return k !== 'unknown' ? { ...p, kind: k } : p
+      }),
+    )
+  }, [settings.finishedIdCode, settings.finishedIdMode, settings.mpIdCode])
 
   useEffect(() => {
     // Backup diario automático (por ahora dentro de localStorage).
@@ -327,7 +448,7 @@ function App() {
       createdAt: new Date().toISOString(),
       products,
       recipes,
-      activePriceList,
+      settings,
     }
 
     try {
@@ -336,7 +457,7 @@ function App() {
     } catch {
       // ignore quota errors for now
     }
-  }, [activePriceList, products, recipes])
+  }, [products, recipes, settings])
 
   const sortedProducts = useMemo(
     () => [...products].sort((a, b) => a.description.localeCompare(b.description, 'es')),
@@ -385,8 +506,12 @@ function App() {
       }
     }
 
-    return computeRecipeSummary({ recipe: selectedRecipe, products, activePriceList })
-  }, [activePriceList, products, selectedRecipe])
+    return computeRecipeSummary({
+      recipe: selectedRecipe,
+      products,
+      activePriceList: settings.priceListNumber,
+    })
+  }, [products, selectedRecipe, settings.priceListNumber])
 
   const selectedRecipeIdsForExport = useMemo(
     () => Object.entries(exportSelection).filter(([, v]) => v).map(([k]) => k),
@@ -429,7 +554,7 @@ function App() {
     }
     const isTab = text.includes('\t')
     const { imported, headerLine } = isTab
-      ? parseTabFile(text, products)
+      ? parseTabFile(text, products, settings.finishedIdMode)
       : parsePrn(text, products)
 
     if (imported.length === 0) {
@@ -438,13 +563,7 @@ function App() {
     }
 
     const normalized = normalizeProducts(imported)
-    const hasClassification = inferHasClassification(normalized)
-    const decorated = hasClassification
-      ? normalized
-      : normalized.map((p) => ({
-          ...p,
-          kind: kindFromGroupCode(p.groupCode),
-        }))
+    const decorated = applyClassificationAfterImport(normalized, products, settings)
 
     setProducts(decorated)
     setImportMsg(
@@ -452,60 +571,56 @@ function App() {
     )
   }
 
-  const exportRecipeTxt = () => {
+  const exportRecipeTxt = async () => {
     if (!selectedRecipe) return
     const finished = products.find((p) => p.code === selectedRecipe.finishedProductCode)
-    // Export format solicitado:
-    // CODIGO <TAB> LISTA <TAB> PRECIO
-    // Para v2 exportamos el precio sugerido de la receta (por unidad) del producto terminado.
     if (!finished) return
 
     const precio = recipeCostSummary.suggestedPrice
     const precioTxt = precio.toFixed(2).replace('.', ',')
-    const contenido = `${finished.code}\t${activePriceList}\t${precioTxt}`
+    const lista = settings.priceListNumber
+    const contenido = `${finished.code}\t${lista}\t${precioTxt}`
 
-    const blob = new Blob([contenido], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const safeName =
-      exportFileName.trim().replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ') ||
-      'precios'
-    a.download = `${safeName}.txt`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    await saveExportTxt({
+      baseName: exportFileName,
+      contents: contenido,
+      exportFolderPath: settings.exportFolderPath,
+      setMsg: setRecipeMsg,
+    })
   }
 
-  const exportMultipleRecipesTxt = (ids: string[]) => {
+  const exportMultipleRecipesTxt = async (ids: string[]) => {
     const selected = recipes.filter((recipe) => ids.includes(recipe.id))
     if (selected.length === 0) return
 
     const lines: string[] = []
+    const lista = settings.priceListNumber
 
     for (const recipe of selected) {
       const finished = products.find((p) => p.code === recipe.finishedProductCode)
       if (!finished) continue
-      const summary = computeRecipeSummary({ recipe, products, activePriceList })
+      const summary = computeRecipeSummary({ recipe, products, activePriceList: lista })
       const precioTxt = summary.suggestedPrice.toFixed(2).replace('.', ',')
-      lines.push(`${finished.code}\t${activePriceList}\t${precioTxt}`)
+      lines.push(`${finished.code}\t${lista}\t${precioTxt}`)
     }
 
     if (lines.length === 0) return
 
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const safeName =
-      exportFileName.trim().replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ') ||
-      'precios'
-    a.download = `${safeName}.txt`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    await saveExportTxt({
+      baseName: exportFileName,
+      contents: lines.join('\n'),
+      exportFolderPath: settings.exportFolderPath,
+      setMsg: setRecipeMsg,
+    })
+  }
+
+  const pickExportFolder = async () => {
+    const electron = typeof window !== 'undefined' ? window.costorecetasElectron : undefined
+    if (!electron?.pickExportFolder) return
+    const picked = await electron.pickExportFolder()
+    if (picked) {
+      setSettings((prev) => ({ ...prev, exportFolderPath: picked }))
+    }
   }
 
   return (
@@ -521,7 +636,7 @@ function App() {
             }}
           />
           <div className="brandText">
-            <div className="title">Costos recetas v2</div>
+            <div className="title">Costos recetas 1.30</div>
           </div>
         </div>
         <div className="headerActions">
@@ -560,6 +675,13 @@ function App() {
         >
           Recetas
         </button>
+        <button
+          className={`tab ${activeTab === 'parametros' ? 'active' : ''}`}
+          type="button"
+          onClick={() => setActiveTab('parametros')}
+        >
+          Parámetros
+        </button>
       </div>
 
       <main className="content">
@@ -590,7 +712,8 @@ function App() {
                 <div>Código</div>
                 <div>Descripción</div>
                 <div>U.M.</div>
-                <div>Precio {activePriceList}</div>
+                <div>Agrup. / Rubro</div>
+                <div>Precio {settings.priceListNumber}</div>
                 <div>x Cantidad</div>
                 <div>Costo unitario</div>
                 <div>Tipo</div>
@@ -601,7 +724,8 @@ function App() {
                   <div>{product.code}</div>
                   <div>{product.description}</div>
                   <div>{product.unit || '-'}</div>
-                  <div>{toMoney(priceForList(product, activePriceList))}</div>
+                  <div>{product.groupCode || product.rubro || '-'}</div>
+                  <div>{toMoney(priceForList(product, settings.priceListNumber))}</div>
                   <div>
                     <input
                       className="input"
@@ -618,7 +742,7 @@ function App() {
                       }
                     />
                   </div>
-                  <div>{toMoney(unitBaseCost(product, activePriceList))}</div>
+                  <div>{toMoney(unitBaseCost(product, settings.priceListNumber))}</div>
                   <div>
                     <select
                       className="input"
@@ -634,8 +758,8 @@ function App() {
                       }
                     >
                       <option value="unknown">Sin definir</option>
-                      <option value="mp">Materia prima (G001)</option>
-                      <option value="pt">Producto terminado (G003)</option>
+                      <option value="mp">Materia prima ({settings.mpIdCode})</option>
+                      <option value="pt">Producto terminado ({settings.finishedIdCode})</option>
                       <option value="both">Ambos</option>
                     </select>
                   </div>
@@ -643,7 +767,7 @@ function App() {
               ))}
             </div>
           </section>
-        ) : (
+        ) : activeTab === 'recetas' ? (
           <div className="recipesLayout">
             <section className="card recipeListCard">
               <div className="sectionHead">
@@ -679,7 +803,7 @@ function App() {
                 <button
                   className="button"
                   type="button"
-                  onClick={() => exportMultipleRecipesTxt(selectedRecipeIdsForExport)}
+                  onClick={() => void exportMultipleRecipesTxt(selectedRecipeIdsForExport)}
                   disabled={selectedRecipeIdsForExport.length === 0}
                   title={
                     selectedRecipeIdsForExport.length === 0
@@ -742,7 +866,7 @@ function App() {
                   <button
                     className="button secondary"
                     type="button"
-                    onClick={exportRecipeTxt}
+                    onClick={() => void exportRecipeTxt()}
                     disabled={!selectedRecipe}
                   >
                     Exportar resumen
@@ -778,21 +902,14 @@ function App() {
                         placeholder="Ej: lp1000"
                       />
                     </label>
-                    <label className="field" style={{ margin: 0 }}>
-                      <span>Lista de precios (1-6)</span>
-                      <select
-                        className="input"
-                        value={activePriceList}
-                        onChange={(e) => setActivePriceList(clampNumber(Number(e.target.value)) || 1)}
-                      >
-                        {[1, 2, 3, 4, 5, 6].map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
                   </div>
+                  <p className="muted" style={{ marginTop: 0 }}>
+                    Lista de precios usada en costos y en el TXT: {settings.priceListNumber}. Cambiala en la pestaña{' '}
+                    <button type="button" className="linkLike" onClick={() => setActiveTab('parametros')}>
+                      Parámetros
+                    </button>
+                    .
+                  </p>
 
                   <div className="grid3">
                     <label className="field">
@@ -859,7 +976,7 @@ function App() {
                     {selectedRecipe.lines.map((line) => {
                       const product = products.find((item) => item.code === line.productCode)
                       const lineTotal = product
-                        ? unitBaseCost(product, activePriceList) * clampNumber(line.quantity)
+                        ? unitBaseCost(product, settings.priceListNumber) * clampNumber(line.quantity)
                         : 0
                       return (
                         <div className="row rowRecipe" key={line.id}>
@@ -900,7 +1017,7 @@ function App() {
                           />
 
                           <div className="inlineValue">
-                            {product ? toMoney(unitBaseCost(product, activePriceList)) : '-'}
+                            {product ? toMoney(unitBaseCost(product, settings.priceListNumber)) : '-'}
                           </div>
                           <div className="inlineValue">{toMoney(lineTotal)}</div>
                           <div className="cellRight">
@@ -968,6 +1085,122 @@ function App() {
               )}
             </section>
           </div>
+        ) : (
+          <section className="card">
+            <div className="sectionHead">
+              <div>
+                <h2>Parámetros</h2>
+                <p className="muted">
+                  Lista de precios, cómo se reconocen productos terminados en importación tabular, y carpeta de exportación
+                  del TXT (app de escritorio).
+                </p>
+              </div>
+            </div>
+
+            <label className="field">
+              <span>Lista de precios a usar (1 a 6)</span>
+              <select
+                className="input"
+                value={settings.priceListNumber}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    priceListNumber: clampPriceList(Number(e.target.value)),
+                  }))
+                }
+              >
+                {[1, 2, 3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>
+                    Lista {n}
+                  </option>
+                ))}
+              </select>
+              <span className="muted smallHint">
+                Se usa para precios en la grilla de productos, costos en recetas y el número de lista en el archivo TXT.
+              </span>
+            </label>
+
+            <div style={{ marginTop: 16 }}>
+              <fieldset className="fieldsetLike">
+                <legend className="muted">Productos terminados y materia prima</legend>
+                <div className="radioRow">
+                  <label>
+                    <input
+                      type="radio"
+                      name="finishedIdMode"
+                      checked={settings.finishedIdMode === 'agrupacion'}
+                      onChange={() => setSettings((prev) => ({ ...prev, finishedIdMode: 'agrupacion' }))}
+                    />
+                    Por código de agrupación (columna tab después de descripción)
+                  </label>
+                </div>
+                <div className="radioRow">
+                  <label>
+                    <input
+                      type="radio"
+                      name="finishedIdMode"
+                      checked={settings.finishedIdMode === 'rubro'}
+                      onChange={() => setSettings((prev) => ({ ...prev, finishedIdMode: 'rubro' }))}
+                    />
+                    Por rubro (misma columna del archivo tab; interpretación según modo)
+                  </label>
+                </div>
+
+                <label className="field" style={{ marginTop: 12 }}>
+                  <span>Código que identifica productos terminados</span>
+                  <input
+                    className="input"
+                    value={settings.finishedIdCode}
+                    onChange={(e) =>
+                      setSettings((prev) => ({ ...prev, finishedIdCode: e.target.value }))
+                    }
+                    placeholder="Ej: G003"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Código que identifica materia prima</span>
+                  <input
+                    className="input"
+                    value={settings.mpIdCode}
+                    onChange={(e) =>
+                      setSettings((prev) => ({ ...prev, mpIdCode: e.target.value }))
+                    }
+                    placeholder="Ej: G001"
+                  />
+                </label>
+                <p className="muted smallHint">
+                  Archivos LP en formato tab: código, descripción, tercer campo (agrupación o rubro), unidad, precios 1…6.
+                  Los archivos PRN sin ese campo no se clasifican solos: podés ajustar el tipo manualmente en Productos.
+                </p>
+              </fieldset>
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <label className="field">
+                <span>Carpeta para exportar el TXT</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1 }}
+                    value={settings.exportFolderPath}
+                    onChange={(e) =>
+                      setSettings((prev) => ({ ...prev, exportFolderPath: e.target.value }))
+                    }
+                    placeholder="Ej: D:\\Exportaciones\\precios"
+                  />
+                  <button className="button secondary" type="button" onClick={() => void pickExportFolder()}>
+                    Elegir carpeta…
+                  </button>
+                </div>
+                <span className="muted smallHint">
+                  {typeof window !== 'undefined' && window.costorecetasElectron
+                    ? 'Si está vacío o falla el guardado, se descarga el archivo como en el navegador.'
+                    : 'En el navegador la exportación siempre descarga el archivo; la carpeta se usa en la aplicación de escritorio.'}
+                </span>
+              </label>
+            </div>
+          </section>
         )}
       </main>
     </div>

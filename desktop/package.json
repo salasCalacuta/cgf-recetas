@@ -1,6 +1,6 @@
 {
   "name": "costorecetas-desktop",
-  "version": "1.0.0",
+  "version": "1.30.0",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -20,6 +20,7 @@
         "to": "dist"
       },
       "main.js",
+      "preload.js",
       "package.json"
     ],
     "directories": {
