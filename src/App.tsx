@@ -373,19 +373,21 @@ async function saveExportTxt(params: {
   baseName: string
   contents: string
   exportFolderPath: string
+  priceListNumber: number
   setMsg: (s: string) => void
 }) {
   const safeBase = sanitizeExportBaseName(params.baseName)
   const electron = typeof window !== 'undefined' ? window.costorecetasElectron : undefined
   const folder = params.exportFolderPath.trim()
+  const lista = params.priceListNumber
   if (electron && folder) {
     const res = await electron.saveExportFile(folder, `${safeBase}.txt`, params.contents)
     if (res.ok && res.path) {
-      params.setMsg(`Exportado: ${res.path}`)
+      params.setMsg(`Archivo guardado (lista ${lista}, carpeta de Parámetros): ${res.path}`)
       return
     }
     params.setMsg(
-      `No se pudo guardar en la carpeta (${res.error ?? 'error'}). Se descarga el archivo.`,
+      `No se pudo guardar en la carpeta de Parámetros (${res.error ?? 'error'}). Se descarga el archivo (lista ${lista}).`,
     )
   }
   const blob = new Blob([params.contents], { type: 'text/plain;charset=utf-8' })
@@ -400,8 +402,8 @@ async function saveExportTxt(params: {
   if (!electron || !folder) {
     params.setMsg(
       electron && !folder
-        ? 'Archivo descargado. Podés definir la carpeta en Parámetros para guardar directo en disco.'
-        : 'Archivo descargado.',
+        ? `Archivo descargado (lista ${lista}). Configurá la carpeta en Parámetros para guardarlo ahí en disco.`
+        : `Archivo descargado (lista ${lista}).`,
     )
   }
 }
@@ -483,9 +485,17 @@ function App() {
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase()
     if (!q) return sortedProducts
-    return sortedProducts.filter(
-      (p) => p.code.toLowerCase().includes(q) || p.description.toLowerCase().includes(q) || p.unit.toLowerCase().includes(q),
-    )
+    return sortedProducts.filter((p) => {
+      const gc = (p.groupCode ?? '').toLowerCase()
+      const rb = (p.rubro ?? '').toLowerCase()
+      return (
+        p.code.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q) ||
+        p.unit.toLowerCase().includes(q) ||
+        gc.includes(q) ||
+        rb.includes(q)
+      )
+    })
   }, [productSearch, sortedProducts])
 
   const selectedRecipe =
@@ -577,7 +587,7 @@ function App() {
       text = new TextDecoder('utf-8').decode(buf)
     }
     const isTab = text.includes('\t')
-    const { imported, headerLine } = isTab
+    const { imported } = isTab
       ? parseTabFile(text, products, settings.finishedIdMode)
       : parsePrn(text, products)
 
@@ -590,9 +600,7 @@ function App() {
     const decorated = applyClassificationAfterImport(normalized, products, settings)
 
     setProducts(decorated)
-    setImportMsg(
-      `Importados ${imported.length} productos desde "${file.name}". Encabezado detectado: ${headerLine.trim() || 'sin datos'}.`,
-    )
+    setImportMsg(`Se cargaron ${imported.length} productos.`)
   }
 
   const exportRecipeTxt = async () => {
@@ -609,6 +617,7 @@ function App() {
       baseName: exportFileName,
       contents: contenido,
       exportFolderPath: settings.exportFolderPath,
+      priceListNumber: lista,
       setMsg: setRecipeMsg,
     })
   }
@@ -634,6 +643,7 @@ function App() {
       baseName: exportFileName,
       contents: lines.join('\n'),
       exportFolderPath: settings.exportFolderPath,
+      priceListNumber: lista,
       setMsg: setRecipeMsg,
     })
   }
@@ -649,7 +659,7 @@ function App() {
 
   return (
     <div className="page">
-      <header className="header">
+      <header className="header headerBrandOnly">
         <div className="brand">
           <img
             className="logo"
@@ -660,27 +670,8 @@ function App() {
             }}
           />
           <div className="brandText">
-            <div className="title">Costos recetas 1.31</div>
+            <div className="title">Costos recetas 1.32</div>
           </div>
-        </div>
-        <div className="headerActions">
-          <input
-            id={fileInputId}
-            className="fileInput"
-            type="file"
-            accept=".prn,.txt,.dat,text/plain,application/octet-stream"
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              if (f) void importPrn(f)
-              e.currentTarget.value = ''
-            }}
-          />
-          <label className="button secondary" htmlFor={fileInputId}>
-            Actualizo precios
-          </label>
-          <button className="button" type="button" onClick={createRecipe}>
-            Nueva receta
-          </button>
         </div>
       </header>
 
@@ -715,20 +706,42 @@ function App() {
               <div>
                 <h2>Productos Discovery</h2>
               </div>
-              <div className="stats">
-                <div className="pill">{products.length} productos</div>
+              <div className="sectionHeadTools">
+                <div className="stats">
+                  <div className="pill">{products.length} productos</div>
+                </div>
+                <input
+                  id={fileInputId}
+                  className="fileInput"
+                  type="file"
+                  accept=".prn,.txt,.dat,text/plain,application/octet-stream"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) void importPrn(f)
+                    e.currentTarget.value = ''
+                  }}
+                />
+                <label className="button secondary" htmlFor={fileInputId}>
+                  Actualizo precios
+                </label>
+                <button className="button" type="button" onClick={createRecipe}>
+                  Nueva receta
+                </button>
               </div>
             </div>
 
             {importMsg ? <div className="importMsg">{importMsg}</div> : null}
 
             <div className="toolbar">
-              <input
-                className="input"
-                placeholder="Buscar por código, descripción o unidad"
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-              />
+              <label className="field searchField">
+                <span>Buscador</span>
+                <input
+                  className="input"
+                  placeholder="Filtrar por código, descripción, unidad, agrupación o rubro"
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                />
+              </label>
             </div>
 
             <div className="table">
@@ -796,7 +809,7 @@ function App() {
               <div className="sectionHead">
                 <div>
                   <h2>Recetas</h2>
-                  <p className="muted">Guardadas en el navegador. Seleccioná una o creá una nueva.</p>
+                  <p className="muted">Seleccioná una receta para editarla y exportarla.</p>
                 </div>
               </div>
 
@@ -927,7 +940,7 @@ function App() {
                     </label>
                   </div>
                   <p className="muted" style={{ marginTop: 0 }}>
-                    Lista de precios usada en costos y en el TXT: {settings.priceListNumber}. Cambiala en la pestaña{' '}
+                    Costos y exportación del TXT usan la lista {settings.priceListNumber} y la carpeta definidas en{' '}
                     <button type="button" className="linkLike" onClick={() => setActiveTab('parametros')}>
                       Parámetros
                     </button>

@@ -13,8 +13,8 @@ export default defineConfig({
         enabled: true,
       },
       manifest: {
-        name: 'Costos recetas 1.31',
-        short_name: 'Costos 1.31',
+        name: 'Costos recetas 1.32',
+        short_name: 'Costos 1.32',
         description: 'Calcula costos y precio final según materia prima y ganancia.',
         start_url: '/',
         display: 'standalone',

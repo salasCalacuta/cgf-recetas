@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron')
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
@@ -96,6 +96,8 @@ function createWindow({ port }) {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null)
+
   // In packaged app, dist is copied to "<app>/dist"
   const distDir = path.join(__dirname, 'dist')
   const port = 3123 + Math.floor(Math.random() * 1000)

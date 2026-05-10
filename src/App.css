@@ -17,6 +17,10 @@
   box-shadow: var(--shadow);
 }
 
+.headerBrandOnly {
+  justify-content: flex-start;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -101,6 +105,18 @@
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.sectionHeadTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.searchField {
+  margin-bottom: 0;
 }
 
 .stats {
@@ -351,6 +367,10 @@
 
 .recipeListCard {
   align-self: start;
+}
+
+.recipeListCard .sectionHead {
+  align-items: center;
 }
 
 .recipeTools {
