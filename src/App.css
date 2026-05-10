@@ -315,6 +315,12 @@
   overflow: hidden;
 }
 
+.resultsRecipeHighlight {
+  margin-top: 8px;
+  margin-bottom: 18px;
+  box-shadow: 0 2px 12px rgba(11, 94, 215, 0.14);
+}
+
 .resultRow {
   display: flex;
   justify-content: space-between;

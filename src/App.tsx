@@ -8,7 +8,7 @@ type Product = {
   unit: string
   groupCode?: string
   rubro?: string
-  kind: 'mp' | 'pt' | 'both' | 'unknown'
+  kind: 'mp' | 'pt' | 'unknown'
   price1: number
   price2: number
   price3: number
@@ -133,9 +133,7 @@ function normalizeProducts(raw: unknown): Product[] {
       groupCode: typeof p.groupCode === 'string' ? p.groupCode : undefined,
       rubro: typeof p.rubro === 'string' ? p.rubro : undefined,
       kind:
-        p.kind === 'mp' || p.kind === 'pt' || p.kind === 'both' || p.kind === 'unknown'
-          ? p.kind
-          : 'unknown',
+        p.kind === 'mp' || p.kind === 'pt' || p.kind === 'unknown' ? p.kind : 'unknown',
       price1: typeof p.price1 === 'number' ? p.price1 : Number((p as any).price1 ?? 0),
       price2: typeof p.price2 === 'number' ? p.price2 : Number((p as any).price2 ?? 0),
       price3: typeof p.price3 === 'number' ? p.price3 : Number((p as any).price3 ?? 0),
@@ -205,6 +203,18 @@ function normalizeRecipes(raw: unknown): Recipe[] {
         : [],
     }))
     .filter((r) => Number.isFinite(r.productionQty) && Number.isFinite(r.marginPct))
+}
+
+/** Una sola receta por producto terminado: si había duplicados guardados, se dejan sin PT desde la segunda en adelante. */
+function dedupeRecipesByFinishedProduct(recipes: Recipe[]): Recipe[] {
+  const seen = new Set<string>()
+  return recipes.map((r) => {
+    const c = r.finishedProductCode.trim()
+    if (!c) return r
+    if (seen.has(c)) return { ...r, finishedProductCode: '' }
+    seen.add(c)
+    return r
+  })
 }
 
 function parsePrn(contents: string, previousProducts: Product[]): ParsedPrnResult {
@@ -401,7 +411,9 @@ function App() {
   const [products, setProducts] = useState<Product[]>(() =>
     normalizeProducts(readStorage('costorecetas-v2-products', [])),
   )
-  const [recipes, setRecipes] = useState<Recipe[]>(() => normalizeRecipes(readStorage('costorecetas-v2-recipes', [])))
+  const [recipes, setRecipes] = useState<Recipe[]>(() =>
+    dedupeRecipesByFinishedProduct(normalizeRecipes(readStorage('costorecetas-v2-recipes', []))),
+  )
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>('')
   const [exportSelection, setExportSelection] = useState<Record<string, boolean>>({})
   const [productSearch, setProductSearch] = useState('')
@@ -464,15 +476,9 @@ function App() {
     [products],
   )
 
-  const finishedProducts = useMemo(
-    () => sortedProducts.filter((p) => p.kind === 'pt' || p.kind === 'both' || p.kind === 'unknown'),
-    [sortedProducts],
-  )
+  const finishedProducts = useMemo(() => sortedProducts.filter((p) => p.kind === 'pt'), [sortedProducts])
 
-  const rawMaterials = useMemo(
-    () => sortedProducts.filter((p) => p.kind === 'mp' || p.kind === 'both' || p.kind === 'unknown'),
-    [sortedProducts],
-  )
+  const rawMaterials = useMemo(() => sortedProducts.filter((p) => p.kind === 'mp'), [sortedProducts])
 
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase()
@@ -539,6 +545,24 @@ function App() {
   const updateRecipe = (updater: (recipe: Recipe) => Recipe) => {
     if (!selectedRecipe) return
     setRecipes((prev) => prev.map((recipe) => (recipe.id === selectedRecipe.id ? updater(recipe) : recipe)))
+  }
+
+  const setFinishedProductCodeForRecipe = (code: string) => {
+    if (!selectedRecipe) return
+    if (
+      code &&
+      recipes.some(
+        (r) =>
+          r.id !== selectedRecipe.id &&
+          r.finishedProductCode === code &&
+          r.finishedProductCode.trim() !== '',
+      )
+    ) {
+      setRecipeMsg('Ya existe una receta para ese producto terminado. Editá la existente o elegí otro.')
+      return
+    }
+    setRecipeMsg('')
+    updateRecipe((recipe) => ({ ...recipe, finishedProductCode: code }))
   }
 
   const importPrn = async (file: File) => {
@@ -636,7 +660,7 @@ function App() {
             }}
           />
           <div className="brandText">
-            <div className="title">Costos recetas 1.30</div>
+            <div className="title">Costos recetas 1.31</div>
           </div>
         </div>
         <div className="headerActions">
@@ -760,7 +784,6 @@ function App() {
                       <option value="unknown">Sin definir</option>
                       <option value="mp">Materia prima ({settings.mpIdCode})</option>
                       <option value="pt">Producto terminado ({settings.finishedIdCode})</option>
-                      <option value="both">Ambos</option>
                     </select>
                   </div>
                 </div>
@@ -911,18 +934,30 @@ function App() {
                     .
                   </p>
 
+                  {finishedProducts.length === 0 || rawMaterials.length === 0 ? (
+                    <div className="hint smallHint" style={{ marginBottom: 12 }}>
+                      {finishedProducts.length === 0 ? (
+                        <div>
+                          No hay productos clasificados como <strong>terminado (PT)</strong>. Definilos en la pestaña
+                          Productos.
+                        </div>
+                      ) : null}
+                      {rawMaterials.length === 0 ? (
+                        <div style={{ marginTop: finishedProducts.length === 0 ? 8 : 0 }}>
+                          No hay productos clasificados como <strong>materia prima (MP)</strong>. Definilos en la pestaña
+                          Productos.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
                   <div className="grid3">
                     <label className="field">
                       <span>Producto terminado</span>
                       <select
                         className="input"
                         value={selectedRecipe.finishedProductCode}
-                        onChange={(e) =>
-                          updateRecipe((recipe) => ({
-                            ...recipe,
-                            finishedProductCode: e.target.value,
-                          }))
-                        }
+                        onChange={(e) => setFinishedProductCodeForRecipe(e.target.value)}
                       >
                         <option value="">Seleccionar producto</option>
                         {finishedProducts.map((product) => (
@@ -962,6 +997,25 @@ function App() {
                         }
                       />
                     </label>
+                  </div>
+
+                  <div className="results resultsRecipeHighlight">
+                    <div className="resultRow">
+                      <span>Costo total del lote</span>
+                      <b>{toMoney(recipeCostSummary.totalCost)}</b>
+                    </div>
+                    <div className="resultRow">
+                      <span>Costo unitario</span>
+                      <b>{toMoney(recipeCostSummary.unitCost)}</b>
+                    </div>
+                    <div className="resultRow">
+                      <span>Ganancia por unidad</span>
+                      <b>{toMoney(recipeCostSummary.marginAmount)}</b>
+                    </div>
+                    <div className="resultRow total">
+                      <span>Precio sugerido por unidad</span>
+                      <b>{toMoney(recipeCostSummary.suggestedPrice)}</b>
+                    </div>
                   </div>
 
                   <div className="table recipeTable">
@@ -1062,25 +1116,6 @@ function App() {
                       Revisá la receta: cada renglón debe tener una materia prima y una cantidad mayor a 0.
                     </div>
                   ) : null}
-
-                  <div className="results">
-                    <div className="resultRow">
-                      <span>Costo total del lote</span>
-                      <b>{toMoney(recipeCostSummary.totalCost)}</b>
-                    </div>
-                    <div className="resultRow">
-                      <span>Costo unitario</span>
-                      <b>{toMoney(recipeCostSummary.unitCost)}</b>
-                    </div>
-                    <div className="resultRow">
-                      <span>Ganancia por unidad</span>
-                      <b>{toMoney(recipeCostSummary.marginAmount)}</b>
-                    </div>
-                    <div className="resultRow total">
-                      <span>Precio sugerido por unidad</span>
-                      <b>{toMoney(recipeCostSummary.suggestedPrice)}</b>
-                    </div>
-                  </div>
                 </>
               )}
             </section>
