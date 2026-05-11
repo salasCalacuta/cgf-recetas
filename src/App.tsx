@@ -670,7 +670,7 @@ function App() {
         <div className="brand">
           <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos recetas 1.33</div>
+            <div className="title">Costos recetas 1.34</div>
           </div>
         </div>
       </header>
