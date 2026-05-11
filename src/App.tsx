@@ -1,4 +1,6 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { ConfirmBar } from './ConfirmBar'
+import { LoginScreen } from './LoginScreen'
 import './App.css'
 
 type Product = {
@@ -408,18 +410,49 @@ async function saveExportTxt(params: {
   }
 }
 
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function stableStringifyProducts(list: Product[]) {
+  return JSON.stringify([...list].sort((a, b) => a.code.localeCompare(b.code, 'es')))
+}
+
+function stableStringifyRecipes(list: Recipe[]) {
+  return JSON.stringify(
+    [...list].sort((a, b) => a.id.localeCompare(b.id)).map((r) => ({
+      ...r,
+      lines: [...r.lines].sort((a, b) => a.id.localeCompare(b.id)),
+    })),
+  )
+}
+
 function App() {
+  const storedProductsInit = normalizeProducts(readStorage('costorecetas-v2-products', []))
+  const storedRecipesInit = dedupeRecipesByFinishedProduct(
+    normalizeRecipes(readStorage('costorecetas-v2-recipes', [])),
+  )
+  const storedSettingsInit = loadInitialSettings()
+
+  const [loggedIn, setLoggedIn] = useState(
+    () => typeof sessionStorage !== 'undefined' && sessionStorage.getItem('costorecetas-v2-auth') === '1',
+  )
+
   const [activeTab, setActiveTab] = useState<Tab>('productos')
-  const [products, setProducts] = useState<Product[]>(() =>
-    normalizeProducts(readStorage('costorecetas-v2-products', [])),
-  )
-  const [recipes, setRecipes] = useState<Recipe[]>(() =>
-    dedupeRecipesByFinishedProduct(normalizeRecipes(readStorage('costorecetas-v2-recipes', []))),
-  )
+  const [products, setProducts] = useState<Product[]>(storedProductsInit)
+  const [productosBaseline, setProductosBaseline] = useState<Product[]>(() => cloneJson(storedProductsInit))
+  const [pendingImport, setPendingImport] = useState<{ products: Product[]; count: number } | null>(null)
+
+  const [recipes, setRecipes] = useState<Recipe[]>(storedRecipesInit)
+  const [recetasBaseline, setRecetasBaseline] = useState<Recipe[]>(() => cloneJson(storedRecipesInit))
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>('')
   const [exportSelection, setExportSelection] = useState<Record<string, boolean>>({})
   const [productSearch, setProductSearch] = useState('')
-  const [settings, setSettings] = useState<AppSettings>(() => loadInitialSettings())
+  const [settings, setSettings] = useState<AppSettings>(storedSettingsInit)
+  const [parametrosBaseline, setParametrosBaseline] = useState(() => ({
+    settings: cloneJson(storedSettingsInit) as AppSettings,
+    products: cloneJson(storedProductsInit) as Product[],
+  }))
   const [exportFileName, setExportFileName] = useState<string>(
     () => readStorage('costorecetas-v2-exportFileName', 'precios'),
   )
@@ -428,29 +461,8 @@ function App() {
   const fileInputId = useId()
 
   useEffect(() => {
-    localStorage.setItem('costorecetas-v2-products', JSON.stringify(products))
-  }, [products])
-
-  useEffect(() => {
-    localStorage.setItem('costorecetas-v2-recipes', JSON.stringify(recipes))
-  }, [recipes])
-
-  useEffect(() => {
-    localStorage.setItem('costorecetas-v2-settings', JSON.stringify(settings))
-  }, [settings])
-
-  useEffect(() => {
     localStorage.setItem('costorecetas-v2-exportFileName', JSON.stringify(exportFileName))
   }, [exportFileName])
-
-  useEffect(() => {
-    setProducts((prev) =>
-      prev.map((p) => {
-        const k = classifyProductFromSettings(p, settings)
-        return k !== 'unknown' ? { ...p, kind: k } : p
-      }),
-    )
-  }, [settings.finishedIdCode, settings.finishedIdMode, settings.mpIdCode])
 
   useEffect(() => {
     // Backup diario automático (por ahora dentro de localStorage).
@@ -472,6 +484,83 @@ function App() {
       // ignore quota errors for now
     }
   }, [products, recipes, settings])
+
+  const productosDirty = useMemo(() => {
+    if (pendingImport) return true
+    return stableStringifyProducts(products) !== stableStringifyProducts(productosBaseline)
+  }, [pendingImport, products, productosBaseline])
+
+  const recetasDirty = useMemo(
+    () => stableStringifyRecipes(recipes) !== stableStringifyRecipes(recetasBaseline),
+    [recipes, recetasBaseline],
+  )
+
+  const parametrosDirty = useMemo(() => {
+    const s = JSON.stringify(settings)
+    const sb = JSON.stringify(parametrosBaseline.settings)
+    return s !== sb
+  }, [settings, parametrosBaseline.settings])
+
+  const selectTab = (t: Tab) => {
+    if (t === 'parametros') {
+      setParametrosBaseline({
+        settings: cloneJson(settings),
+        products: cloneJson(products),
+      })
+    }
+    setActiveTab(t)
+  }
+
+  const acceptProductos = () => {
+    const next = pendingImport ? pendingImport.products : products
+    setProducts(next)
+    localStorage.setItem('costorecetas-v2-products', JSON.stringify(next))
+    setProductosBaseline(cloneJson(next))
+    setPendingImport(null)
+    setImportMsg('Cambios en productos guardados.')
+  }
+
+  const cancelProductos = () => {
+    setProducts(cloneJson(productosBaseline))
+    setPendingImport(null)
+    setImportMsg('Se descartaron los cambios pendientes en productos.')
+  }
+
+  const acceptRecetas = () => {
+    localStorage.setItem('costorecetas-v2-recipes', JSON.stringify(recipes))
+    setRecetasBaseline(cloneJson(recipes))
+    setRecipeMsg('Cambios en recetas guardados.')
+  }
+
+  const cancelRecetas = () => {
+    setRecipes(cloneJson(recetasBaseline))
+    setRecipeMsg('Se descartaron los cambios pendientes en recetas.')
+  }
+
+  const acceptParametros = () => {
+    const classified = products.map((p) => {
+      const k = classifyProductFromSettings(p, settings)
+      return k !== 'unknown' ? { ...p, kind: k } : p
+    })
+    setProducts(classified)
+    localStorage.setItem('costorecetas-v2-products', JSON.stringify(classified))
+    localStorage.setItem('costorecetas-v2-settings', JSON.stringify(settings))
+    setParametrosBaseline({
+      settings: cloneJson(settings),
+      products: cloneJson(classified),
+    })
+    setProductosBaseline(cloneJson(classified))
+  }
+
+  const cancelParametros = () => {
+    setSettings(cloneJson(parametrosBaseline.settings))
+    setProducts(cloneJson(parametrosBaseline.products))
+  }
+
+  const logout = () => {
+    sessionStorage.removeItem('costorecetas-v2-auth')
+    setLoggedIn(false)
+  }
 
   const sortedProducts = useMemo(
     () => [...products].sort((a, b) => a.description.localeCompare(b.description, 'es')),
@@ -556,7 +645,7 @@ function App() {
     setRecipes((prev) => [...prev, next])
     setSelectedRecipeId(next.id)
     setRecipeMsg('Nueva receta creada.')
-    setActiveTab('recetas')
+    selectTab('recetas')
   }
 
   const updateRecipe = (updater: (recipe: Recipe) => Recipe) => {
@@ -606,8 +695,10 @@ function App() {
     const normalized = normalizeProducts(imported)
     const decorated = applyClassificationAfterImport(normalized, products, settings)
 
-    setProducts(decorated)
-    setImportMsg(`Se cargaron ${imported.length} productos.`)
+    setPendingImport({ products: decorated, count: imported.length })
+    setImportMsg(
+      `Listos para importar ${imported.length} productos. Confirmá con Aceptar o Cancelar al pie de la pantalla.`,
+    )
   }
 
   const exportRecipeTxt = async () => {
@@ -664,42 +755,53 @@ function App() {
     }
   }
 
+  if (!loggedIn) {
+    return <LoginScreen onSuccess={() => setLoggedIn(true)} />
+  }
+
   return (
-    <div className="page">
+    <div className="page appShell">
+      <div className="screenWatermark" aria-hidden>
+        <img src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
+      </div>
+
       <header className="header headerBrandOnly">
         <div className="brand">
           <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos recetas 1.34</div>
+            <div className="title">Costos recetas 1.35</div>
           </div>
         </div>
+        <button className="button secondary logoutBtn" type="button" onClick={logout}>
+          Salir
+        </button>
       </header>
 
       <div className="tabs">
         <button
           className={`tab ${activeTab === 'productos' ? 'active' : ''}`}
           type="button"
-          onClick={() => setActiveTab('productos')}
+          onClick={() => selectTab('productos')}
         >
           Productos
         </button>
         <button
           className={`tab ${activeTab === 'recetas' ? 'active' : ''}`}
           type="button"
-          onClick={() => setActiveTab('recetas')}
+          onClick={() => selectTab('recetas')}
         >
           Recetas
         </button>
         <button
           className={`tab ${activeTab === 'parametros' ? 'active' : ''}`}
           type="button"
-          onClick={() => setActiveTab('parametros')}
+          onClick={() => selectTab('parametros')}
         >
           Parámetros
         </button>
       </div>
 
-      <main className="content">
+      <main className="content contentStacked">
         {activeTab === 'productos' ? (
           <section className="card">
             <div className="sectionHead">
@@ -754,6 +856,7 @@ function App() {
                 <div>x Cantidad</div>
                 <div>Costo unitario</div>
                 <div>Tipo</div>
+                <div className="cellRight">Quitar</div>
               </div>
 
               {filteredProducts.map((product) => (
@@ -799,9 +902,28 @@ function App() {
                       <option value="pt">Producto terminado ({settings.finishedIdCode})</option>
                     </select>
                   </div>
+                  <div className="cellRight">
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => {
+                        if (!window.confirm(`¿Eliminar el producto ${product.code} de la lista?`)) return
+                        setProducts((prev) => prev.filter((item) => item.id !== product.id))
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
+
+            <ConfirmBar
+              dirty={productosDirty}
+              groupName="productos"
+              onAccept={acceptProductos}
+              onCancel={cancelProductos}
+            />
           </section>
         ) : activeTab === 'recetas' ? (
           <div className="recipesLayout">
@@ -964,7 +1086,7 @@ function App() {
                   </div>
                   <p className="muted" style={{ marginTop: 0 }}>
                     Costos y exportación del TXT usan la lista {settings.priceListNumber} y la carpeta definidas en{' '}
-                    <button type="button" className="linkLike" onClick={() => setActiveTab('parametros')}>
+                    <button type="button" className="linkLike" onClick={() => selectTab('parametros')}>
                       Parámetros
                     </button>
                     .
@@ -1122,7 +1244,7 @@ function App() {
                                   lines:
                                     recipe.lines.length > 1
                                       ? recipe.lines.filter((item) => item.id !== line.id)
-                                      : recipe.lines,
+                                      : [{ id: uid(), productCode: '', quantity: 0 }],
                                 }))
                               }
                             >
@@ -1156,6 +1278,13 @@ function App() {
                   ) : null}
                 </>
               )}
+
+              <ConfirmBar
+                dirty={recetasDirty}
+                groupName="recetas"
+                onAccept={acceptRecetas}
+                onCancel={cancelRecetas}
+              />
             </section>
           </div>
         ) : (
@@ -1273,6 +1402,13 @@ function App() {
                 </span>
               </label>
             </div>
+
+            <ConfirmBar
+              dirty={parametrosDirty}
+              groupName="parametros"
+              onAccept={acceptParametros}
+              onCancel={cancelParametros}
+            />
           </section>
         )}
       </main>
