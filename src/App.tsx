@@ -172,7 +172,7 @@ function applyClassificationAfterImport(productsIn: Product[], previousProducts:
   return productsIn.map((p) => {
     const prev = previousByCode.get(p.code)
     const computed = classifyProductFromSettings(p, s)
-    let kind: Product['kind'] =
+    const kind: Product['kind'] =
       computed !== 'unknown'
         ? computed
         : prev?.kind && prev.kind !== 'unknown'
@@ -230,7 +230,7 @@ function parsePrn(contents: string, previousProducts: Product[]): ParsedPrnResul
     const line = raw.trimEnd()
     if (!line.trim()) continue
     if (line.includes('LISTA DE PRECIOS')) continue
-    if (line.includes('C¢digo') || line.includes('Código')) continue
+    if (line.includes('C\u00a2digo') || line.includes('C\u00f3digo')) continue
     if (/^[-\s]+$/.test(line)) continue
     if (/^MALVADOS/i.test(line.trim())) continue
     if (/^Hoja:/i.test(line.trim())) continue
@@ -383,7 +383,12 @@ function decodeBestEffort(buf: ArrayBuffer) {
     // common mojibake when UTF-8 decoded as Windows-1252
     points += (s.match(/[ÃÂ]/g)?.length ?? 0) * 2
     // weird control chars that sometimes appear on wrong decodes
-    points += (s.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g)?.length ?? 0) * 5
+    let controlCount = 0
+    for (let i = 0; i < s.length; i += 1) {
+      const c = s.charCodeAt(i)
+      if ((c >= 0 && c <= 8) || c === 11 || c === 12 || (c >= 14 && c <= 31)) controlCount += 1
+    }
+    points += controlCount * 5
     return points
   }
 
@@ -406,11 +411,11 @@ async function saveExportTxt(params: {
   if (electron && folder) {
     const res = await electron.saveExportFile(folder, `${safeBase}.txt`, params.contents)
     if (res.ok && res.path) {
-      params.setMsg(`Archivo guardado (lista ${lista}, carpeta de Parámetros): ${res.path}`)
+      params.setMsg(`Archivo guardado (lista ${lista}, carpeta de Par\u00e1metros): ${res.path}`)
       return
     }
     params.setMsg(
-      `No se pudo guardar en la carpeta de Parámetros (${res.error ?? 'error'}). Se descarga el archivo (lista ${lista}).`,
+      `No se pudo guardar en la carpeta de Par\u00e1metros (${res.error ?? 'error'}). Se descarga el archivo (lista ${lista}).`,
     )
   }
   const blob = new Blob([params.contents], { type: 'text/plain;charset=utf-8' })
@@ -425,7 +430,7 @@ async function saveExportTxt(params: {
   if (!electron || !folder) {
     params.setMsg(
       electron && !folder
-        ? `Archivo descargado (lista ${lista}). Configurá la carpeta en Parámetros para guardarlo ahí en disco.`
+        ? `Archivo descargado (lista ${lista}). Configur\u00e1 la carpeta en Par\u00e1metros para guardarlo ah\u00ed en disco.`
         : `Archivo descargado (lista ${lista}).`,
     )
   }
@@ -456,7 +461,18 @@ function App() {
   const storedSettingsInit = loadInitialSettings()
 
   const [loggedIn, setLoggedIn] = useState(
-    () => typeof sessionStorage !== 'undefined' && sessionStorage.getItem('costorecetas-v2-auth') === '1',
+    () => {
+      const sessionOk =
+        typeof sessionStorage !== 'undefined' && sessionStorage.getItem('costorecetas-v2-auth') === '1'
+      if (sessionOk) return true
+      try {
+        const remember = localStorage.getItem('costorecetas-v2-authRemember') === '1'
+        if (remember) sessionStorage.setItem('costorecetas-v2-auth', '1')
+        return remember
+      } catch {
+        return false
+      }
+    },
   )
 
   const [activeTab, setActiveTab] = useState<Tab>('productos')
@@ -580,6 +596,11 @@ function App() {
 
   const logout = () => {
     sessionStorage.removeItem('costorecetas-v2-auth')
+    try {
+      localStorage.removeItem('costorecetas-v2-authRemember')
+    } catch {
+      // ignore storage errors
+    }
     setLoggedIn(false)
   }
 
@@ -685,7 +706,7 @@ function App() {
           r.finishedProductCode.trim() !== '',
       )
     ) {
-      setRecipeMsg('Ya existe una receta para ese producto terminado. Editá la existente o elegí otro.')
+      setRecipeMsg('Ya existe una receta para ese producto terminado. Edit\u00e1 la existente o eleg\u00ed otro.')
       return
     }
     setRecipeMsg('')
@@ -704,7 +725,9 @@ function App() {
       : parsePrn(text, products)
 
     if (imported.length === 0) {
-      setImportMsg('No se pudieron leer productos del archivo. Se esperaba encabezado en línea 6 y datos desde línea 8.')
+      setImportMsg(
+        'No se pudieron leer productos del archivo. Se esperaba encabezado en l\u00ednea 6 y datos desde l\u00ednea 8.',
+      )
       return
     }
 
@@ -713,7 +736,7 @@ function App() {
 
     setPendingImport({ products: decorated, count: imported.length })
     setImportMsg(
-      `Listos para importar ${imported.length} productos. Confirmá con Aceptar o Cancelar al pie de la pantalla.`,
+      `Listos para importar ${imported.length} productos. Confirm\u00e1 con Aceptar o Cancelar al pie de la pantalla.`,
     )
   }
 
@@ -778,14 +801,14 @@ function App() {
   return (
     <div className="page appShell">
       <div className="screenWatermark" aria-hidden>
-        <img src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
+        <img src={`${import.meta.env.BASE_URL}logoCGF.png`} alt="" />
       </div>
 
       <header className="header headerBrandOnly">
         <div className="brand">
           <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos recetas 1.35</div>
+            <div className="title">Costos recetas 1.36</div>
           </div>
         </div>
         <button className="button secondary logoutBtn" type="button" onClick={logout}>
@@ -813,7 +836,7 @@ function App() {
           type="button"
           onClick={() => selectTab('parametros')}
         >
-          Parámetros
+          Par\u00e1metros
         </button>
       </div>
 
@@ -855,7 +878,7 @@ function App() {
                 <span>Buscador</span>
                 <input
                   className="input"
-                  placeholder="Filtrar por código, descripción, unidad, agrupación o rubro"
+                  placeholder="Filtrar por c\u00f3digo, descripci\u00f3n, unidad, agrupaci\u00f3n o rubro"
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
                 />
@@ -864,8 +887,8 @@ function App() {
 
             <div className="table">
               <div className="row rowProducts head">
-                <div>Código</div>
-                <div>Descripción</div>
+                <div>C\u00f3digo</div>
+                <div>Descripci\u00f3n</div>
                 <div>U.M.</div>
                 <div>Agrup. / Rubro</div>
                 <div>Precio {settings.priceListNumber}</div>
@@ -947,7 +970,7 @@ function App() {
               <div className="sectionHead">
                 <div>
                   <h2>Recetas</h2>
-                  <p className="muted">Seleccioná una receta para editarla y exportarla.</p>
+                  <p className="muted">Seleccion\u00e1 una receta para editarla y exportarla.</p>
                 </div>
               </div>
 
@@ -971,7 +994,7 @@ function App() {
                   type="button"
                   onClick={() => {
                     setExportSelection({})
-                    setRecipeMsg('Se quitaron las marcas de exportación.')
+                    setRecipeMsg('Se quitaron las marcas de exportaci\u00f3n.')
                   }}
                 >
                   Quitar marcas export
@@ -983,7 +1006,7 @@ function App() {
                     if (recipes.length === 0) return
                     if (
                       !window.confirm(
-                        '¿Eliminar todas las recetas? Esta acción no se puede deshacer.',
+                        '\u00bfEliminar todas las recetas? Esta acci\u00f3n no se puede deshacer.',
                       )
                     ) {
                       return
@@ -1004,7 +1027,7 @@ function App() {
                   disabled={selectedRecipeIdsForExport.length === 0}
                   title={
                     selectedRecipeIdsForExport.length === 0
-                      ? 'Seleccioná una o más recetas'
+                      ? 'Seleccion\u00e1 una o m\u00e1s recetas'
                       : undefined
                   }
                 >
@@ -1013,7 +1036,7 @@ function App() {
               </div>
 
               <div className="recipeList">
-                {recipes.length === 0 ? <div className="muted">Todavía no hay recetas.</div> : null}
+                {recipes.length === 0 ? <div className="muted">Todav\u00eda no hay recetas.</div> : null}
                 {recipes.map((recipe) => {
                   const product = products.find((p) => p.code === recipe.finishedProductCode)
                   return (
@@ -1046,7 +1069,7 @@ function App() {
                         <span>Exportar</span>
                       </label>
                       <strong>{product?.description || 'Receta sin producto'}</strong>
-                      <span>{product?.code || 'Sin código'}</span>
+                      <span>{product?.code || 'Sin c\u00f3digo'}</span>
                     </button>
                   )
                 })}
@@ -1057,7 +1080,7 @@ function App() {
               <div className="sectionHead">
                 <div>
                   <h2>Carga recetas</h2>
-                  <p className="muted">Producto terminado, producción estimada, materias primas y costo unitario.</p>
+                  <p className="muted">Producto terminado, producci\u00f3n estimada, materias primas y costo unitario.</p>
                 </div>
                 <div className="headerActions">
                   <button
@@ -1084,7 +1107,7 @@ function App() {
               </div>
 
               {!selectedRecipe ? (
-                <div className="muted">Creá una receta para empezar.</div>
+                <div className="muted">Cre\u00e1 una receta para empezar.</div>
               ) : (
                 <>
                   {recipeMsg ? <div className="importMsg">{recipeMsg}</div> : null}
@@ -1101,9 +1124,9 @@ function App() {
                     </label>
                   </div>
                   <p className="muted" style={{ marginTop: 0 }}>
-                    Costos y exportación del TXT usan la lista {settings.priceListNumber} y la carpeta definidas en{' '}
+                    Costos y exportaci\u00f3n del TXT usan la lista {settings.priceListNumber} y la carpeta definidas en{' '}
                     <button type="button" className="linkLike" onClick={() => selectTab('parametros')}>
-                      Parámetros
+                      Par\u00e1metros
                     </button>
                     .
                   </p>
@@ -1112,13 +1135,13 @@ function App() {
                     <div className="hint smallHint" style={{ marginBottom: 12 }}>
                       {finishedProducts.length === 0 ? (
                         <div>
-                          No hay productos clasificados como <strong>terminado (PT)</strong>. Definilos en la pestaña
+                          No hay productos clasificados como <strong>terminado (PT)</strong>. Definilos en la pesta\u00f1a
                           Productos.
                         </div>
                       ) : null}
                       {rawMaterials.length === 0 ? (
                         <div style={{ marginTop: finishedProducts.length === 0 ? 8 : 0 }}>
-                          No hay productos clasificados como <strong>materia prima (MP)</strong>. Definilos en la pestaña
+                          No hay productos clasificados como <strong>materia prima (MP)</strong>. Definilos en la pesta\u00f1a
                           Productos.
                         </div>
                       ) : null}
@@ -1143,7 +1166,7 @@ function App() {
                     </label>
 
                     <label className="field">
-                      <span>Producción estimada</span>
+                      <span>Producci\u00f3n estimada</span>
                       <input
                         className="input"
                         inputMode="decimal"
@@ -1197,7 +1220,7 @@ function App() {
                       <div>Materia prima</div>
                       <div>Cantidad consumida</div>
                       <div>Precio unitario</div>
-                      <div>Total línea</div>
+                      <div>Total l\u00ednea</div>
                       <div></div>
                     </div>
 
@@ -1225,7 +1248,8 @@ function App() {
                               .filter((productItem) => productItem.code !== selectedRecipe.finishedProductCode)
                               .map((productItem) => (
                                 <option key={productItem.code} value={productItem.code}>
-                                  {productItem.description} ({productItem.code})
+                                  {productItem.description} ({productItem.code}) -{' '}
+                                  {toMoney(priceForList(productItem, settings.priceListNumber))}
                                 </option>
                               ))}
                           </select>
@@ -1283,13 +1307,13 @@ function App() {
                         }))
                       }
                     >
-                      Agregar renglón
+                    Agregar rengl\u00f3n
                     </button>
                   </div>
 
                   {recipeHasInvalidLines ? (
                     <div className="errorMsg">
-                      Revisá la receta: cada renglón debe tener una materia prima y una cantidad mayor a 0.
+                    Revis\u00e1 la receta: cada rengl\u00f3n debe tener una materia prima y una cantidad mayor a 0.
                     </div>
                   ) : null}
                 </>
@@ -1307,9 +1331,9 @@ function App() {
           <section className="card">
             <div className="sectionHead">
               <div>
-                <h2>Parámetros</h2>
+                <h2>Par\u00e1metros</h2>
                 <p className="muted">
-                  Lista de precios, cómo se reconocen productos terminados en importación tabular, y carpeta de exportación
+                  Lista de precios, c\u00f3mo se reconocen productos terminados en importaci\u00f3n tabular, y carpeta de exportaci\u00f3n
                   del TXT (app de escritorio).
                 </p>
               </div>
@@ -1334,7 +1358,7 @@ function App() {
                 ))}
               </select>
               <span className="muted smallHint">
-                Se usa para precios en la grilla de productos, costos en recetas y el número de lista en el archivo TXT.
+                Se usa para precios en la grilla de productos, costos en recetas y el n\u00famero de lista en el archivo TXT.
               </span>
             </label>
 
@@ -1349,7 +1373,7 @@ function App() {
                       checked={settings.finishedIdMode === 'agrupacion'}
                       onChange={() => setSettings((prev) => ({ ...prev, finishedIdMode: 'agrupacion' }))}
                     />
-                    Por código de agrupación (columna tab después de descripción)
+                    Por c\u00f3digo de agrupaci\u00f3n (columna tab despu\u00e9s de descripci\u00f3n)
                   </label>
                 </div>
                 <div className="radioRow">
@@ -1360,12 +1384,12 @@ function App() {
                       checked={settings.finishedIdMode === 'rubro'}
                       onChange={() => setSettings((prev) => ({ ...prev, finishedIdMode: 'rubro' }))}
                     />
-                    Por rubro (misma columna del archivo tab; interpretación según modo)
+                    Por rubro (misma columna del archivo tab; interpretaci\u00f3n seg\u00fan modo)
                   </label>
                 </div>
 
                 <label className="field" style={{ marginTop: 12 }}>
-                  <span>Código que identifica productos terminados</span>
+                  <span>C\u00f3digo que identifica productos terminados</span>
                   <input
                     className="input"
                     value={settings.finishedIdCode}
@@ -1377,7 +1401,7 @@ function App() {
                 </label>
 
                 <label className="field">
-                  <span>Código que identifica materia prima</span>
+                  <span>C\u00f3digo que identifica materia prima</span>
                   <input
                     className="input"
                     value={settings.mpIdCode}
@@ -1388,8 +1412,8 @@ function App() {
                   />
                 </label>
                 <p className="muted smallHint">
-                  Archivos LP en formato tab: código, descripción, tercer campo (agrupación o rubro), unidad, precios 1…6.
-                  Los archivos PRN sin ese campo no se clasifican solos: podés ajustar el tipo manualmente en Productos.
+                  Archivos LP en formato tab: c\u00f3digo, descripci\u00f3n, tercer campo (agrupaci\u00f3n o rubro), unidad, precios 1\u20266.
+                  Los archivos PRN sin ese campo no se clasifican solos: pod\u00e9s ajustar el tipo manualmente en Productos.
                 </p>
               </fieldset>
             </div>
@@ -1413,8 +1437,8 @@ function App() {
                 </div>
                 <span className="muted smallHint">
                   {typeof window !== 'undefined' && window.costorecetasElectron
-                    ? 'Si está vacío o falla el guardado, se descarga el archivo como en el navegador.'
-                    : 'En el navegador la exportación siempre descarga el archivo; la carpeta se usa en la aplicación de escritorio.'}
+                    ? 'Si est\u00e1 vac\u00edo o falla el guardado, se descarga el archivo como en el navegador.'
+                    : 'En el navegador la exportaci\u00f3n siempre descarga el archivo; la carpeta se usa en la aplicaci\u00f3n de escritorio.'}
                 </span>
               </label>
             </div>
