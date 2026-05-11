@@ -1,6 +1,6 @@
 {
   "name": "costorecetas-desktop",
-  "version": "1.36.0",
+  "version": "1.36.1",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -40,9 +40,11 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "createDesktopShortcut": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "Costorecetas"
+      "shortcutName": "Costorecetas",
+      "menuCategory": "Costorecetas"
     }
   }
 }

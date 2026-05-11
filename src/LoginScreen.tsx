@@ -33,21 +33,21 @@ export function LoginScreen({ onSuccess }: Props) {
       onSuccess()
       return
     }
-    setError('Usuario o contrase\u00f1a incorrectos.')
+    setError('Usuario o contraseùa incorrectos.')
   }
 
   return (
     <div className="loginWrap">
       <div className="loginCard card">
         <h1 className="loginTitle">Costos recetas</h1>
-        <p className="muted">Ingres\u00e1 con tu usuario de cocina.</p>
+        <p className="muted">Ingresù con tu usuario de cocina.</p>
         <form className="loginForm" onSubmit={submit}>
           <label className="field">
             <span>Usuario</span>
             <input className="input" autoComplete="username" value={user} onChange={(e) => setUser(e.target.value)} />
           </label>
           <label className="field">
-            <span>Contrase\u00f1a</span>
+            <span>Contraseùa</span>
             <input
               className="input"
               type="password"
@@ -58,7 +58,7 @@ export function LoginScreen({ onSuccess }: Props) {
           </label>
           <label className="radioRow" style={{ marginBottom: 0 }}>
             <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            Recordar contrase\u00f1a
+            Recordar contraseÒa
           </label>
           {error ? <div className="errorMsg">{error}</div> : null}
           <button className="button loginSubmit" type="submit">
