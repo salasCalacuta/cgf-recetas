@@ -371,6 +371,27 @@ function sanitizeExportBaseName(raw: string) {
   return raw.trim().replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ') || 'precios'
 }
 
+function decodeBestEffort(buf: ArrayBuffer) {
+  const tryUtf8 = () => new TextDecoder('utf-8', { fatal: false }).decode(buf)
+  const tryWin1252 = () => new TextDecoder('windows-1252', { fatal: false }).decode(buf)
+
+  const score = (s: string) => {
+    // Lower score = better.
+    let points = 0
+    // replacement char means decode problems
+    points += (s.match(/�/g)?.length ?? 0) * 10
+    // common mojibake when UTF-8 decoded as Windows-1252
+    points += (s.match(/[ÃÂ]/g)?.length ?? 0) * 2
+    // weird control chars that sometimes appear on wrong decodes
+    points += (s.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g)?.length ?? 0) * 5
+    return points
+  }
+
+  const utf8 = tryUtf8()
+  const win = tryWin1252()
+  return score(utf8) <= score(win) ? utf8 : win
+}
+
 async function saveExportTxt(params: {
   baseName: string
   contents: string
@@ -674,14 +695,9 @@ function App() {
   const importPrn = async (file: File) => {
     setImportMsg('')
     const buf = await file.arrayBuffer()
-    // Discovery export suele venir en Windows-1252/ANSI (por eso los acentos se veían como �).
-    // Probamos windows-1252 y si falla, caemos a utf-8.
-    let text = ''
-    try {
-      text = new TextDecoder('windows-1252').decode(buf)
-    } catch {
-      text = new TextDecoder('utf-8').decode(buf)
-    }
+    // El export puede venir en Windows-1252 o en UTF-8 (si se exportó/guardó distinto).
+    // Elegimos la decodificación con menos "mojibake" (Ã±, �, etc).
+    const text = decodeBestEffort(buf)
     const isTab = text.includes('\t')
     const { imported } = isTab
       ? parseTabFile(text, products, settings.finishedIdMode)
