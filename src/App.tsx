@@ -478,9 +478,16 @@ function App() {
     [products],
   )
 
-  const finishedProducts = useMemo(() => sortedProducts.filter((p) => p.kind === 'pt'), [sortedProducts])
+  /** Recetas: incluir "sin definir" para poder elegir hasta clasificar en Productos. */
+  const finishedProducts = useMemo(
+    () => sortedProducts.filter((p) => p.kind === 'pt' || p.kind === 'unknown'),
+    [sortedProducts],
+  )
 
-  const rawMaterials = useMemo(() => sortedProducts.filter((p) => p.kind === 'mp'), [sortedProducts])
+  const rawMaterials = useMemo(
+    () => sortedProducts.filter((p) => p.kind === 'mp' || p.kind === 'unknown'),
+    [sortedProducts],
+  )
 
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase()
@@ -661,16 +668,9 @@ function App() {
     <div className="page">
       <header className="header headerBrandOnly">
         <div className="brand">
-          <img
-            className="logo"
-            src="/logo.PNG"
-            alt="Logo"
-            onError={(e) => {
-              e.currentTarget.src = '/logo.svg'
-            }}
-          />
+          <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos recetas 1.32</div>
+            <div className="title">Costos recetas 1.33</div>
           </div>
         </div>
       </header>
@@ -831,10 +831,33 @@ function App() {
                 <button
                   className="button secondary"
                   type="button"
-                  onClick={() => setExportSelection({})}
-                  disabled={selectedRecipeIdsForExport.length === 0}
+                  onClick={() => {
+                    setExportSelection({})
+                    setRecipeMsg('Se quitaron las marcas de exportación.')
+                  }}
                 >
-                  Limpiar
+                  Quitar marcas export
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => {
+                    if (recipes.length === 0) return
+                    if (
+                      !window.confirm(
+                        '¿Eliminar todas las recetas? Esta acción no se puede deshacer.',
+                      )
+                    ) {
+                      return
+                    }
+                    setRecipes([])
+                    setSelectedRecipeId('')
+                    setExportSelection({})
+                    setRecipeMsg('Se eliminaron todas las recetas.')
+                  }}
+                  disabled={recipes.length === 0}
+                >
+                  Borrar todas las recetas
                 </button>
                 <button
                   className="button"
@@ -1060,11 +1083,13 @@ function App() {
                             }
                           >
                             <option value="">Seleccionar materia prima</option>
-                            {rawMaterials.map((productItem) => (
-                              <option key={productItem.code} value={productItem.code}>
-                                {productItem.description} ({productItem.code})
-                              </option>
-                            ))}
+                            {rawMaterials
+                              .filter((productItem) => productItem.code !== selectedRecipe.finishedProductCode)
+                              .map((productItem) => (
+                                <option key={productItem.code} value={productItem.code}>
+                                  {productItem.description} ({productItem.code})
+                                </option>
+                              ))}
                           </select>
 
                           <input

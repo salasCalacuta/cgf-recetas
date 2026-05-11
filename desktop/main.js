@@ -47,11 +47,29 @@ function contentTypeFor(filePath) {
   }
 }
 
+/** Must match vite.config.ts `base` (leading slash, no trailing slash). */
+const WEB_BASE = '/cgf-recetas'
+
+function urlToDistRelative(urlPath) {
+  let p = (urlPath || '/').split('?')[0].replace(/\\/g, '/')
+  if (!p.startsWith('/')) p = `/${p}`
+
+  if (p === '/' || p === '/index.html') return 'index.html'
+  if (p === `${WEB_BASE}/` || p === WEB_BASE) return 'index.html'
+
+  const prefix = `${WEB_BASE}/`
+  if (p.startsWith(prefix)) {
+    const rest = p.slice(prefix.length)
+    return rest || 'index.html'
+  }
+
+  return p.replace(/^\//, '') || 'index.html'
+}
+
 function createStaticServer(distDir, port) {
   return http.createServer((req, res) => {
     const urlPath = (req.url || '/').split('?')[0]
-    const safeUrlPath = urlPath.replace(/\\/g, '/')
-    const relPath = safeUrlPath === '/' ? 'index.html' : safeUrlPath.replace(/^\//, '')
+    const relPath = urlToDistRelative(urlPath)
 
     const filePath = path.join(distDir, relPath)
     if (!filePath.startsWith(distDir)) {
