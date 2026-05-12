@@ -15,12 +15,8 @@ type Product = {
   groupCode?: string
   rubro?: string
   kind: 'mp' | 'pt' | 'unknown'
-  price1: number
-  price2: number
-  price3: number
-  price4: number
-  price5: number
-  price6: number
+  /** Lista 1 = índice 0. Longitud mínima 6; puede crecer si se usa una lista > 6. */
+  prices: number[]
   equivalenceQty: number
 }
 
@@ -40,6 +36,17 @@ type Recipe = {
 
 type Tab = 'productos' | 'recetas' | 'parametros'
 
+type PendingImportRow = {
+  product: Product
+  packageQtyText: string
+  baseUnitPrice: number
+}
+
+type PendingImportState = {
+  rows: PendingImportRow[]
+  count: number
+}
+
 type AppSettings = {
   priceListNumber: number
   finishedIdMode: 'agrupacion' | 'rubro'
@@ -58,7 +65,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 function clampPriceList(n: number) {
   if (!Number.isFinite(n)) return 1
-  return Math.min(6, Math.max(1, Math.round(n)))
+  return Math.min(999, Math.max(1, Math.round(n)))
 }
 
 type ParsedPrnResult = {
@@ -93,6 +100,51 @@ function parseNumberEs(raw: string) {
 
   const n = Number(normalized)
   return Number.isFinite(n) ? n : NaN
+}
+
+function pricesFromRaw(p: Partial<Product> & Record<string, unknown>): number[] {
+  if (Array.isArray(p.prices)) {
+    return (p.prices as unknown[]).map((x) =>
+      typeof x === 'number' && Number.isFinite(x) ? x : Number(x) || 0,
+    )
+  }
+  return [1, 2, 3, 4, 5, 6].map((i) => {
+    const k = `price${i}` as keyof typeof p
+    const v = p[k]
+    return typeof v === 'number' && Number.isFinite(v) ? v : Number(v ?? 0) || 0
+  })
+}
+
+function ensureMinPricesLength(prices: number[], minLen: number) {
+  const out = [...prices]
+  while (out.length < minLen) out.push(0)
+  return out
+}
+
+function priceForList(product: Product, priceList: number) {
+  const idx = clampPriceList(priceList) - 1
+  const arr = product.prices
+  return arr[idx] ?? 0
+}
+
+function setPriceAtList(product: Product, listNum: number, value: number) {
+  const idx = clampPriceList(listNum) - 1
+  const next = [...ensureMinPricesLength(product.prices, Math.max(6, idx + 1))]
+  next[idx] = value
+  return { ...product, prices: next }
+}
+
+/** Cantidad del importador: vacío = sin divisor; número > 0 = aplica a precio unitario. */
+function parseImportPackageQty(raw: string): number | null {
+  const t = raw.trim().replace(/\s+/g, '')
+  if (t === '') return null
+  const n = parseNumberEs(t)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return n
+}
+
+function filterNumericQtyInput(raw: string) {
+  return raw.replace(/[^\d.,]/g, '')
 }
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -130,29 +182,28 @@ function loadInitialSettings(): AppSettings {
 function normalizeProducts(raw: unknown): Product[] {
   if (!Array.isArray(raw)) return []
   return raw
-    .map((p) => p as Partial<Product>)
+    .map((p) => p as Partial<Product> & Record<string, unknown>)
     .filter((p) => typeof p?.code === 'string' && typeof p?.description === 'string')
-    .map((p) => ({
-      id: typeof p.id === 'string' ? p.id : uid(),
-      code: String(p.code),
-      description: String(p.description),
-      unit: typeof p.unit === 'string' ? p.unit : '',
-      groupCode: typeof p.groupCode === 'string' ? p.groupCode : undefined,
-      rubro: typeof p.rubro === 'string' ? p.rubro : undefined,
-      kind:
-        p.kind === 'mp' || p.kind === 'pt' || p.kind === 'unknown' ? p.kind : 'unknown',
-      price1: typeof p.price1 === 'number' ? p.price1 : Number((p as any).price1 ?? 0),
-      price2: typeof p.price2 === 'number' ? p.price2 : Number((p as any).price2 ?? 0),
-      price3: typeof p.price3 === 'number' ? p.price3 : Number((p as any).price3 ?? 0),
-      price4: typeof p.price4 === 'number' ? p.price4 : Number((p as any).price4 ?? 0),
-      price5: typeof p.price5 === 'number' ? p.price5 : Number((p as any).price5 ?? 0),
-      price6: typeof p.price6 === 'number' ? p.price6 : Number((p as any).price6 ?? 0),
-      equivalenceQty:
-        typeof p.equivalenceQty === 'number'
-          ? p.equivalenceQty
-          : Number((p as any).equivalenceQty ?? 1),
-    }))
-    .filter((p) => Number.isFinite(p.price1) && Number.isFinite(p.equivalenceQty))
+    .map((p) => {
+      let prices = pricesFromRaw(p)
+      prices = ensureMinPricesLength(prices, 6)
+      return {
+        id: typeof p.id === 'string' ? p.id : uid(),
+        code: String(p.code),
+        description: String(p.description),
+        unit: typeof p.unit === 'string' ? p.unit : '',
+        groupCode: typeof p.groupCode === 'string' ? p.groupCode : undefined,
+        rubro: typeof p.rubro === 'string' ? p.rubro : undefined,
+        kind:
+          p.kind === 'mp' || p.kind === 'pt' || p.kind === 'unknown' ? p.kind : 'unknown',
+        prices,
+        equivalenceQty:
+          typeof p.equivalenceQty === 'number'
+            ? p.equivalenceQty
+            : Number((p as any).equivalenceQty ?? 1),
+      }
+    })
+    .filter((p) => Number.isFinite(p.prices[0]) && Number.isFinite(p.equivalenceQty))
 }
 
 function classifyProductFromSettings(p: Product, s: AppSettings): Product['kind'] {
@@ -249,6 +300,10 @@ function parsePrn(contents: string, previousProducts: Product[]): ParsedPrnResul
 
     const [, code, description, unitRaw, price1Raw, price2Raw, price3Raw, price4Raw, price5Raw, price6Raw] = match
     const prev = previousByCode.get(code)
+    const rawPrices = [price1Raw, price2Raw, price3Raw, price4Raw, price5Raw, price6Raw].map((r) =>
+      parseNumberEs(r),
+    )
+    const prices = rawPrices.map((n) => (Number.isFinite(n) ? n : 0))
     out.push({
       id: prev?.id ?? uid(),
       code,
@@ -257,12 +312,7 @@ function parsePrn(contents: string, previousProducts: Product[]): ParsedPrnResul
       groupCode: prev?.groupCode,
       rubro: prev?.rubro,
       kind: 'unknown',
-      price1: parseNumberEs(price1Raw),
-      price2: parseNumberEs(price2Raw),
-      price3: parseNumberEs(price3Raw),
-      price4: parseNumberEs(price4Raw),
-      price5: parseNumberEs(price5Raw),
-      price6: parseNumberEs(price6Raw),
+      prices: ensureMinPricesLength(prices, 6),
       equivalenceQty: prev?.equivalenceQty ?? 1,
     })
   }
@@ -298,15 +348,8 @@ function parseTabFile(
     const rubro = finishedIdMode === 'rubro' ? (third || prev?.rubro) : undefined
     const unit = cols[3] ?? ''
 
-    const prices = cols.slice(4, 10).map((p) => parseNumberEs(p))
-    const [price1, price2, price3, price4, price5, price6] = [
-      prices[0] ?? 0,
-      prices[1] ?? 0,
-      prices[2] ?? 0,
-      prices[3] ?? 0,
-      prices[4] ?? 0,
-      prices[5] ?? 0,
-    ]
+    const pricesFromCols = cols.slice(4).map((col) => parseNumberEs(col))
+    const prices = pricesFromCols.map((n) => (Number.isFinite(n) ? n : 0))
 
     if (!code || !description) continue
 
@@ -318,31 +361,12 @@ function parseTabFile(
       groupCode,
       rubro,
       kind: 'unknown',
-      price1: Number.isFinite(price1) ? price1 : 0,
-      price2: Number.isFinite(price2) ? price2 : 0,
-      price3: Number.isFinite(price3) ? price3 : 0,
-      price4: Number.isFinite(price4) ? price4 : 0,
-      price5: Number.isFinite(price5) ? price5 : 0,
-      price6: Number.isFinite(price6) ? price6 : 0,
+      prices: ensureMinPricesLength(prices, 6),
       equivalenceQty: prev?.equivalenceQty ?? 1,
     })
   }
 
   return { imported: out, headerLine }
-}
-
-function priceForList(product: Product, priceList: number) {
-  return priceList === 1
-    ? product.price1
-    : priceList === 2
-      ? product.price2
-      : priceList === 3
-        ? product.price3
-        : priceList === 4
-          ? product.price4
-          : priceList === 5
-            ? product.price5
-            : product.price6
 }
 
 function unitBaseCost(product: Product, priceList: number) {
@@ -495,7 +519,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>('productos')
   const [products, setProducts] = useState<Product[]>(storedProductsInit)
   const [productosBaseline, setProductosBaseline] = useState<Product[]>(() => cloneJson(storedProductsInit))
-  const [pendingImport, setPendingImport] = useState<{ products: Product[]; count: number } | null>(null)
+  const [pendingImport, setPendingImport] = useState<PendingImportState | null>(null)
 
   const [recipes, setRecipes] = useState<Recipe[]>(storedRecipesInit)
   const [recetasBaseline, setRecetasBaseline] = useState<Recipe[]>(() => cloneJson(storedRecipesInit))
@@ -555,6 +579,20 @@ function App() {
     return s !== sb
   }, [settings, parametrosBaseline.settings])
 
+  useEffect(() => {
+    setPendingImport((prev) => {
+      if (!prev) return prev
+      const ln = settings.priceListNumber
+      return {
+        ...prev,
+        rows: prev.rows.map((r) => ({
+          ...r,
+          baseUnitPrice: priceForList(r.product, ln),
+        })),
+      }
+    })
+  }, [settings.priceListNumber])
+
   const selectTab = (t: Tab) => {
     if (t === 'parametros') {
       setParametrosBaseline({
@@ -566,7 +604,15 @@ function App() {
   }
 
   const acceptProductos = () => {
-    const next = pendingImport ? pendingImport.products : products
+    const listN = settings.priceListNumber
+    const next = pendingImport
+      ? pendingImport.rows.map(({ product, packageQtyText, baseUnitPrice }) => {
+          const divisor = parseImportPackageQty(packageQtyText)
+          const newUnit =
+            divisor !== null && divisor > 0 ? baseUnitPrice / divisor : baseUnitPrice
+          return setPriceAtList(product, listN, newUnit)
+        })
+      : products
     setProducts(next)
     localStorage.setItem('costorecetas-v2-products', JSON.stringify(next))
     setProductosBaseline(cloneJson(next))
@@ -750,8 +796,14 @@ function App() {
 
     const normalized = normalizeProducts(imported)
     const decorated = applyClassificationAfterImport(normalized, products, settings)
+    const listN = settings.priceListNumber
+    const rows: PendingImportRow[] = decorated.map((p) => ({
+      product: p,
+      packageQtyText: '',
+      baseUnitPrice: priceForList(p, listN),
+    }))
 
-    setPendingImport({ products: decorated, count: imported.length })
+    setPendingImport({ rows, count: imported.length })
     setImportMsg(
       `Listos para importar ${imported.length} productos. Confirmá con Aceptar o Cancelar al pie de la pantalla.`,
     )
@@ -825,7 +877,7 @@ function App() {
         <div className="brand">
           <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos fórmula 1.36.3</div>
+            <div className="title">Costos fórmula 1.36.4</div>
           </div>
         </div>
         <button className="button secondary logoutBtn" type="button" onClick={logout}>
@@ -866,7 +918,9 @@ function App() {
               </div>
               <div className="sectionHeadTools">
                 <div className="stats">
-                  <div className="pill">{products.length} productos</div>
+                  <div className="pill">
+                    {pendingImport ? `${pendingImport.count} a importar` : `${products.length} productos`}
+                  </div>
                 </div>
                 <input
                   id={fileInputId}
@@ -890,86 +944,138 @@ function App() {
 
             {importMsg ? <div className="importMsg">{importMsg}</div> : null}
 
-            <div className="toolbar">
-              <label className="field searchField">
-                <span>Buscador</span>
-                <input
-                  className="input"
-                  placeholder="Filtrar por código, descripción, unidad, agrupación o rubro"
-                  value={productSearch}
-                  onChange={(e) => setProductSearch(e.target.value)}
-                />
-              </label>
-            </div>
-
-            <div className="table">
-              <div className="row rowProducts head">
-                <div>Código</div>
-                <div>Descripción</div>
-                <div>U.M.</div>
-                <div>Agrup. / Rubro</div>
-                <div>Precio {settings.priceListNumber}</div>
-                <div>x Cantidad</div>
-                <div>Costo unitario</div>
-                <div>Tipo</div>
-                <div className="cellRight">Quitar</div>
-              </div>
-
-              {filteredProducts.map((product) => (
-                <div className="row rowProducts" key={product.id}>
-                  <div>{product.code}</div>
-                  <div>{product.description}</div>
-                  <div>{product.unit || '-'}</div>
-                  <div>{product.groupCode || product.rubro || '-'}</div>
-                  <div>{toMoney(priceForList(product, settings.priceListNumber))}</div>
-                  <div>
-                    <DecimalInput
-                      className="input"
-                      value={product.equivalenceQty}
-                      onChange={(n) =>
-                        setProducts((prev) =>
-                          prev.map((item) =>
-                            item.id === product.id ? { ...item, equivalenceQty: clampNumber(n) } : item,
-                          ),
-                        )
-                      }
-                    />
+            {pendingImport ? (
+              <div className="importPreviewWrap">
+                <p className="muted" style={{ marginBottom: 10 }}>
+                  Lista de importación (lista de precios activa: {settings.priceListNumber}). Columna Cantidad: solo
+                  números (coma o punto decimal). Si queda vacía, en la lista activa se guarda el precio importado. Si
+                  hay una cantidad válida mayor a 0, en la lista activa se guarda precio importado ÷ cantidad.
+                </p>
+                <div className="table importPreviewTable">
+                  <div className="row rowImportPreview head">
+                    <div>Código</div>
+                    <div>Descripción</div>
+                    <div>Unidad de medida</div>
+                    <div>Precio unitario</div>
+                    <div>Cantidad</div>
                   </div>
-                  <div>{toMoney(unitBaseCost(product, settings.priceListNumber))}</div>
-                  <div>
-                    <select
-                      className="input"
-                      value={product.kind}
-                      onChange={(e) =>
-                        setProducts((prev) =>
-                          prev.map((item) =>
-                            item.id === product.id
-                              ? { ...item, kind: e.target.value as Product['kind'] }
-                              : item,
-                          ),
-                        )
-                      }
-                    >
-                      <option value="unknown">Sin definir</option>
-                      <option value="mp">Materia prima ({settings.mpIdCode})</option>
-                      <option value="pt">Producto terminado ({settings.finishedIdCode})</option>
-                    </select>
-                  </div>
-                  <div className="cellRight">
-                    <button
-                      className="button secondary"
-                      type="button"
-                      onClick={() => {
-                        if (!window.confirm(`¿Eliminar el producto ${product.code} de la lista?`)) return
-                        setProducts((prev) => prev.filter((item) => item.id !== product.id))
-                      }}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
+                  {pendingImport.rows.map((row, idx) => {
+                    const divisor = parseImportPackageQty(row.packageQtyText)
+                    const displayUnit =
+                      divisor !== null && divisor > 0 ? row.baseUnitPrice / divisor : row.baseUnitPrice
+                    return (
+                      <div className="row rowImportPreview" key={row.product.id}>
+                        <div>{row.product.code}</div>
+                        <div>{row.product.description}</div>
+                        <div>{row.product.unit || '-'}</div>
+                        <div>{toMoney(displayUnit)}</div>
+                        <div>
+                          <input
+                            className="input"
+                            type="text"
+                            inputMode="decimal"
+                            autoComplete="off"
+                            value={row.packageQtyText}
+                            onChange={(e) => {
+                              const v = filterNumericQtyInput(e.target.value)
+                              setPendingImport((prev) => {
+                                if (!prev) return prev
+                                const rows = [...prev.rows]
+                                rows[idx] = { ...rows[idx], packageQtyText: v }
+                                return { ...prev, rows }
+                              })
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <>
+                <div className="toolbar">
+                  <label className="field searchField">
+                    <span>Buscador</span>
+                    <input
+                      className="input"
+                      placeholder="Filtrar por código, descripción, unidad, agrupación o rubro"
+                      value={productSearch}
+                      onChange={(e) => setProductSearch(e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="table">
+                  <div className="row rowProducts head">
+                    <div>Código</div>
+                    <div>Descripción</div>
+                    <div>U.M.</div>
+                    <div>Agrup. / Rubro</div>
+                    <div>Precio {settings.priceListNumber}</div>
+                    <div>x Cantidad</div>
+                    <div>Costo unitario</div>
+                    <div>Tipo</div>
+                    <div className="cellRight">Quitar</div>
+                  </div>
+
+                  {filteredProducts.map((product) => (
+                    <div className="row rowProducts" key={product.id}>
+                      <div>{product.code}</div>
+                      <div>{product.description}</div>
+                      <div>{product.unit || '-'}</div>
+                      <div>{product.groupCode || product.rubro || '-'}</div>
+                      <div>{toMoney(priceForList(product, settings.priceListNumber))}</div>
+                      <div>
+                        <DecimalInput
+                          className="input"
+                          value={product.equivalenceQty}
+                          onChange={(n) =>
+                            setProducts((prev) =>
+                              prev.map((item) =>
+                                item.id === product.id ? { ...item, equivalenceQty: clampNumber(n) } : item,
+                              ),
+                            )
+                          }
+                        />
+                      </div>
+                      <div>{toMoney(unitBaseCost(product, settings.priceListNumber))}</div>
+                      <div>
+                        <select
+                          className="input"
+                          value={product.kind}
+                          onChange={(e) =>
+                            setProducts((prev) =>
+                              prev.map((item) =>
+                                item.id === product.id
+                                  ? { ...item, kind: e.target.value as Product['kind'] }
+                                  : item,
+                              ),
+                            )
+                          }
+                        >
+                          <option value="unknown">Sin definir</option>
+                          <option value="mp">Materia prima ({settings.mpIdCode})</option>
+                          <option value="pt">Producto terminado ({settings.finishedIdCode})</option>
+                        </select>
+                      </div>
+                      <div className="cellRight">
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={() => {
+                            if (!window.confirm(`¿Eliminar el producto ${product.code} de la lista?`)) return
+                            setProducts((prev) => prev.filter((item) => item.id !== product.id))
+                          }}
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
 
             <ConfirmBar
               dirty={productosDirty}
@@ -1359,9 +1465,13 @@ function App() {
             </div>
 
             <label className="field">
-              <span>Lista de precios a usar (1 a 6)</span>
-              <select
+              <span>Lista de precios a usar (1 a 999, máximo 3 dígitos)</span>
+              <input
+                type="number"
                 className="input"
+                min={1}
+                max={999}
+                step={1}
                 value={settings.priceListNumber}
                 onChange={(e) =>
                   setSettings((prev) => ({
@@ -1369,15 +1479,10 @@ function App() {
                     priceListNumber: clampPriceList(Number(e.target.value)),
                   }))
                 }
-              >
-                {[1, 2, 3, 4, 5, 6].map((n) => (
-                  <option key={n} value={n}>
-                    Lista {n}
-                  </option>
-                ))}
-              </select>
+              />
               <span className="muted smallHint">
                 Se usa para precios en la grilla de productos, costos de fórmula y el número de lista en el archivo TXT.
+                Si la lista es mayor que las columnas importadas, el precio se toma como 0 hasta que lo cargue.
               </span>
             </label>
 
@@ -1431,8 +1536,9 @@ function App() {
                   />
                 </label>
                 <p className="muted smallHint">
-                  Archivos LP en formato tab: código, descripción, tercer campo (agrupación o rubro), unidad, precios 1…6.
-                  Los archivos PRN sin ese campo no se clasifican solos: podés ajustar el tipo manualmente en Productos.
+                  Archivos LP en formato tab: código, descripción, tercer campo (agrupación o rubro), unidad, luego una
+                  columna numérica por cada lista de precios (1, 2, …). Los archivos PRN sin ese campo no se clasifican
+                  solos: podés ajustar el tipo manualmente en Productos.
                 </p>
               </fieldset>
             </div>

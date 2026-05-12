@@ -241,6 +241,20 @@
   grid-template-columns: 0.65fr 2fr 0.45fr 0.65fr 0.75fr 0.65fr 0.75fr 1fr 0.85fr;
 }
 
+.importPreviewWrap {
+  margin-top: 8px;
+}
+
+.importPreviewTable {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.rowImportPreview {
+  grid-template-columns: 110px minmax(120px, 1.8fr) 100px minmax(100px, 1fr) 120px;
+}
+
 .linkLike {
   background: none;
   border: none;
@@ -525,6 +539,7 @@
     grid-template-columns: 1fr;
   }
   .rowProducts,
+  .rowImportPreview,
   .rowRecipe,
   .grid3,
   .recipesLayout {

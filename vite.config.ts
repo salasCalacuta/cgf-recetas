@@ -21,8 +21,8 @@ export default defineConfig(({ mode }) => {
                 enabled: true,
               },
               manifest: {
-                name: 'Costos fórmula 1.36.3',
-                short_name: 'Costos 1.36.3',
+                name: 'Costos fórmula 1.36.4',
+                short_name: 'Costos 1.36.4',
                 description: 'Calcula costos y precio final según materia prima y ganancia.',
                 start_url: '/',
                 display: 'standalone',
