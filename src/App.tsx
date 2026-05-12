@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { CatalogGate } from './CatalogGate'
 import { ConfirmBar } from './ConfirmBar'
 import { DecimalInput } from './DecimalInput'
 import { LoginScreen } from './LoginScreen'
@@ -132,6 +133,38 @@ function setPriceAtList(product: Product, listNum: number, value: number) {
   const next = [...ensureMinPricesLength(product.prices, Math.max(6, idx + 1))]
   next[idx] = value
   return { ...product, prices: next }
+}
+
+function mergePriceArraysForImport(prev: number[], inc: number[]) {
+  const len = Math.max(prev.length, inc.length, 6)
+  const p = ensureMinPricesLength([...prev], len)
+  const incoming = [...inc]
+  const out: number[] = []
+  for (let i = 0; i < len; i += 1) {
+    if (i < incoming.length) out.push(Number.isFinite(incoming[i]) ? incoming[i]! : 0)
+    else out.push(p[i] ?? 0)
+  }
+  return out
+}
+
+/** Fusiona importación ODBC con el catálogo en memoria: actualiza/crea por código y conserva el resto. */
+function mergeProductCatalog(existing: Product[], incoming: Product[]): Product[] {
+  const map = new Map<string, Product>(existing.map((p) => [p.code, { ...p }]))
+  for (const inc of incoming) {
+    const prev = map.get(inc.code)
+    if (prev) {
+      map.set(inc.code, {
+        ...inc,
+        id: prev.id,
+        equivalenceQty: prev.equivalenceQty,
+        kind: prev.kind,
+        prices: mergePriceArraysForImport(prev.prices, inc.prices),
+      })
+    } else {
+      map.set(inc.code, { ...inc })
+    }
+  }
+  return [...map.values()].sort((a, b) => a.code.localeCompare(b.code, 'es'))
 }
 
 /** Cantidad del importador: vacío = sin divisor; número > 0 = aplica a precio unitario. */
@@ -537,6 +570,7 @@ function App() {
   const [importMsg, setImportMsg] = useState('')
   const [recipeMsg, setRecipeMsg] = useState('')
   const fileInputId = useId()
+  const catalogFileInputId = useId()
 
   useEffect(() => {
     localStorage.setItem('costorecetas-v2-exportFileName', JSON.stringify(exportFileName))
@@ -605,19 +639,27 @@ function App() {
 
   const acceptProductos = () => {
     const listN = settings.priceListNumber
-    const next = pendingImport
+    const importedList = pendingImport
       ? pendingImport.rows.map(({ product, packageQtyText, baseUnitPrice }) => {
           const divisor = parseImportPackageQty(packageQtyText)
           const newUnit =
             divisor !== null && divisor > 0 ? baseUnitPrice / divisor : baseUnitPrice
           return setPriceAtList(product, listN, newUnit)
         })
-      : products
+      : null
+    const hadProducts = products.length > 0
+    const next = importedList ? mergeProductCatalog(products, importedList) : products
     setProducts(next)
     localStorage.setItem('costorecetas-v2-products', JSON.stringify(next))
     setProductosBaseline(cloneJson(next))
     setPendingImport(null)
-    setImportMsg('Cambios en productos guardados.')
+    setImportMsg(
+      importedList
+        ? hadProducts
+          ? 'Catálogo actualizado: se fusionaron los productos del archivo con el catálogo actual (mismo código se actualiza, códigos nuevos se agregan y el resto se conserva).'
+          : 'Catálogo de productos guardado. Podés volver a importar desde la pestaña Productos para actualizar o sumar artículos.'
+        : 'Cambios en productos guardados.',
+    )
   }
 
   const cancelProductos = () => {
@@ -789,7 +831,7 @@ function App() {
 
     if (imported.length === 0) {
       setImportMsg(
-        'No se pudieron leer productos del archivo .prn o .dat. Si es LP en columnas fijas, debe tener encabezado en línea 6 y datos desde línea 8. Si es formato tab (código, descripción, …), debe incluir líneas con tabuladores.',
+        'No se pudieron leer productos del archivo ODBC/exportación (.prn, .dat, .txt o .csv con tabuladores). Si es LP en columnas fijas, debe tener encabezado en línea 6 y datos desde línea 8.',
       )
       return
     }
@@ -805,7 +847,7 @@ function App() {
 
     setPendingImport({ rows, count: imported.length })
     setImportMsg(
-      `Listos para importar ${imported.length} productos. Confirmá con Aceptar o Cancelar al pie de la pantalla.`,
+      `Listos para importar ${imported.length} productos. Revisá la tabla y confirmá, o cancelá para elegir otro archivo.`,
     )
   }
 
@@ -867,6 +909,34 @@ function App() {
     return <LoginScreen onSuccess={() => setLoggedIn(true)} />
   }
 
+  const needsProductCatalog = products.length === 0
+
+  if (needsProductCatalog) {
+    return (
+      <CatalogGate
+        importMsg={importMsg}
+        pendingImport={pendingImport}
+        fileInputId={catalogFileInputId}
+        priceListNumber={settings.priceListNumber}
+        formatMoney={toMoney}
+        parsePackageQty={parseImportPackageQty}
+        filterNumericQty={filterNumericQtyInput}
+        onPendingRowChange={(rowIndex, packageQtyText) => {
+          setPendingImport((prev) => {
+            if (!prev) return prev
+            const rows = [...prev.rows]
+            rows[rowIndex] = { ...rows[rowIndex], packageQtyText }
+            return { ...prev, rows }
+          })
+        }}
+        onPickFile={(file) => void importPrn(file)}
+        onConfirmImport={() => acceptProductos()}
+        onCancelImport={() => cancelProductos()}
+        onLogout={logout}
+      />
+    )
+  }
+
   return (
     <div className="page appShell">
       <div className="screenWatermark" aria-hidden>
@@ -877,7 +947,7 @@ function App() {
         <div className="brand">
           <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos fórmula 1.36.4</div>
+            <div className="title">Costos fórmula 1.37.0</div>
           </div>
         </div>
         <button className="button secondary logoutBtn" type="button" onClick={logout}>
@@ -926,7 +996,7 @@ function App() {
                   id={fileInputId}
                   className="fileInput"
                   type="file"
-                  accept=".prn,.txt,.dat,text/plain,application/octet-stream"
+                  accept=".prn,.txt,.dat,.csv,text/csv,text/plain,application/octet-stream"
                   onChange={(e) => {
                     const f = e.target.files?.[0]
                     if (f) void importPrn(f)
