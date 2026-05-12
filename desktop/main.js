@@ -1,6 +1,22 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, Menu, session } = require('electron')
 const fs = require('fs')
 const path = require('path')
+
+/** Perfil Chromium nuevo (sin Local Storage): evita datos heredados de otra app con la misma ruta de userData. */
+async function clearStorageIfNewProfile() {
+  if (!app.isPackaged) return
+  const userData = app.getPath('userData')
+  const ls = path.join(userData, 'Local Storage')
+  try {
+    if (!fs.existsSync(ls)) {
+      await session.defaultSession.clearStorageData({
+        storages: ['localstorage', 'sessionstorage', 'indexdb', 'websql'],
+      })
+    }
+  } catch (e) {
+    console.warn('clearStorageData', e)
+  }
+}
 
 ipcMain.handle('save-export-file', async (_event, { folderPath, fileName, contents }) => {
   try {
@@ -51,7 +67,8 @@ function createWindow() {
   return win
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await clearStorageIfNewProfile()
   Menu.setApplicationMenu(null)
   createWindow()
 

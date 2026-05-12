@@ -39,7 +39,7 @@ export function LoginScreen({ onSuccess }: Props) {
   return (
     <div className="loginWrap">
       <div className="loginCard card">
-        <h1 className="loginTitle">Costos recetas</h1>
+        <h1 className="loginTitle">Costos fórmula</h1>
         <p className="muted">Ingrese con tu usuario de cocina.</p>
         <form className="loginForm" onSubmit={submit}>
           <label className="field">

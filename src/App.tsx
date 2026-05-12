@@ -1,10 +1,11 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { ConfirmBar } from './ConfirmBar'
+import { DecimalInput } from './DecimalInput'
 import { LoginScreen } from './LoginScreen'
 import './App.css'
 
 const MSG_RECIPE_DUPLICATE_FINISHED_PRODUCT =
-  'Ya existe una receta para ese producto terminado. Edite la existente o elija otro.'
+  'Ya existe una fórmula para ese producto terminado. Edite la existente o elija otro.'
 
 type Product = {
   id: string
@@ -77,7 +78,8 @@ function toMoney(n: number) {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6,
   }).format(n)
 }
 
@@ -210,7 +212,7 @@ function normalizeRecipes(raw: unknown): Recipe[] {
     .filter((r) => Number.isFinite(r.productionQty) && Number.isFinite(r.marginPct))
 }
 
-/** Una sola receta por producto terminado: si había duplicados guardados, se dejan sin PT desde la segunda en adelante. */
+/** Una sola fórmula por producto terminado: si había duplicados guardados, se dejan sin PT desde la segunda en adelante. */
 function dedupeRecipesByFinishedProduct(recipes: Recipe[]): Recipe[] {
   const seen = new Set<string>()
   return recipes.map((r) => {
@@ -375,6 +377,18 @@ function sanitizeExportBaseName(raw: string) {
 }
 
 function decodeBestEffort(buf: ArrayBuffer) {
+  const u8 = new Uint8Array(buf)
+  if (u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xfe) {
+    return new TextDecoder('utf-16le', { fatal: false }).decode(buf.slice(2))
+  }
+  if (u8.length >= 2 && u8[0] === 0xfe && u8[1] === 0xff) {
+    try {
+      return new TextDecoder('utf-16be', { fatal: false }).decode(buf.slice(2))
+    } catch {
+      // ignore
+    }
+  }
+
   const tryUtf8 = () => new TextDecoder('utf-8', { fatal: false }).decode(buf)
   const tryWin1252 = () => new TextDecoder('windows-1252', { fatal: false }).decode(buf)
 
@@ -569,12 +583,12 @@ function App() {
   const acceptRecetas = () => {
     localStorage.setItem('costorecetas-v2-recipes', JSON.stringify(recipes))
     setRecetasBaseline(cloneJson(recipes))
-    setRecipeMsg('Cambios en recetas guardados.')
+    setRecipeMsg('Cambios de fórmula guardados.')
   }
 
   const cancelRecetas = () => {
     setRecipes(cloneJson(recetasBaseline))
-    setRecipeMsg('Se descartaron los cambios pendientes en recetas.')
+    setRecipeMsg('Se descartaron los cambios pendientes de fórmula.')
   }
 
   const acceptParametros = () => {
@@ -612,7 +626,7 @@ function App() {
     [products],
   )
 
-  /** Recetas: incluir "sin definir" para poder elegir hasta clasificar en Productos. */
+  /** Fórmula: incluir "sin definir" para poder elegir hasta clasificar en Productos. */
   const finishedProducts = useMemo(
     () => sortedProducts.filter((p) => p.kind === 'pt' || p.kind === 'unknown'),
     [sortedProducts],
@@ -689,7 +703,7 @@ function App() {
     }
     setRecipes((prev) => [...prev, next])
     setSelectedRecipeId(next.id)
-    setRecipeMsg('Nueva receta creada.')
+    setRecipeMsg('Nueva fórmula creada.')
     selectTab('recetas')
   }
 
@@ -729,7 +743,7 @@ function App() {
 
     if (imported.length === 0) {
       setImportMsg(
-        'No se pudieron leer productos del archivo. Se esperaba encabezado en línea 6 y datos desde línea 8.',
+        'No se pudieron leer productos del archivo .prn o .dat. Si es LP en columnas fijas, debe tener encabezado en línea 6 y datos desde línea 8. Si es formato tab (código, descripción, …), debe incluir líneas con tabuladores.',
       )
       return
     }
@@ -811,7 +825,7 @@ function App() {
         <div className="brand">
           <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos recetas 1.36.2</div>
+            <div className="title">Costos fórmula 1.36.3</div>
           </div>
         </div>
         <button className="button secondary logoutBtn" type="button" onClick={logout}>
@@ -832,7 +846,7 @@ function App() {
           type="button"
           onClick={() => selectTab('recetas')}
         >
-          Recetas
+          Fórmula
         </button>
         <button
           className={`tab ${activeTab === 'parametros' ? 'active' : ''}`}
@@ -848,7 +862,7 @@ function App() {
           <section className="card">
             <div className="sectionHead">
               <div>
-                <h2>Productos Discovery</h2>
+                <h2>Productos</h2>
               </div>
               <div className="sectionHeadTools">
                 <div className="stats">
@@ -865,11 +879,11 @@ function App() {
                     e.currentTarget.value = ''
                   }}
                 />
-                <label className="button secondary" htmlFor={fileInputId}>
+                <label className="button secondary" htmlFor={fileInputId} title="Importar lista LP (.prn, .dat o .txt tabular)">
                   Actualizo precios
                 </label>
                 <button className="button" type="button" onClick={createRecipe}>
-                  Nueva receta
+                  Nueva fórmula
                 </button>
               </div>
             </div>
@@ -909,16 +923,13 @@ function App() {
                   <div>{product.groupCode || product.rubro || '-'}</div>
                   <div>{toMoney(priceForList(product, settings.priceListNumber))}</div>
                   <div>
-                    <input
+                    <DecimalInput
                       className="input"
-                      inputMode="decimal"
-                      value={String(product.equivalenceQty)}
-                      onChange={(e) =>
+                      value={product.equivalenceQty}
+                      onChange={(n) =>
                         setProducts((prev) =>
                           prev.map((item) =>
-                            item.id === product.id
-                              ? { ...item, equivalenceQty: clampNumber(Number(e.target.value)) }
-                              : item,
+                            item.id === product.id ? { ...item, equivalenceQty: clampNumber(n) } : item,
                           ),
                         )
                       }
@@ -972,8 +983,8 @@ function App() {
             <section className="card recipeListCard">
               <div className="sectionHead">
                 <div>
-                  <h2>Recetas</h2>
-                  <p className="muted">Seleccioná una receta para editarla y exportarla.</p>
+                  <h2>Fórmula</h2>
+                  <p className="muted">Seleccioná una fórmula para editarla y exportarla.</p>
                 </div>
               </div>
 
@@ -1009,7 +1020,7 @@ function App() {
                     if (recipes.length === 0) return
                     if (
                       !window.confirm(
-                        '¿Eliminar todas las recetas? Esta acción no se puede deshacer.',
+                        '¿Eliminar todas las fórmulas? Esta acción no se puede deshacer.',
                       )
                     ) {
                       return
@@ -1017,11 +1028,11 @@ function App() {
                     setRecipes([])
                     setSelectedRecipeId('')
                     setExportSelection({})
-                    setRecipeMsg('Se eliminaron todas las recetas.')
+                    setRecipeMsg('Se eliminaron todas las fórmulas.')
                   }}
                   disabled={recipes.length === 0}
                 >
-                  Borrar todas las recetas
+                  Borrar todas las fórmulas
                 </button>
                 <button
                   className="button"
@@ -1030,7 +1041,7 @@ function App() {
                   disabled={selectedRecipeIdsForExport.length === 0}
                   title={
                     selectedRecipeIdsForExport.length === 0
-                      ? 'Seleccioná una o más recetas'
+                      ? 'Seleccioná una o más fórmulas'
                       : undefined
                   }
                 >
@@ -1039,7 +1050,7 @@ function App() {
               </div>
 
               <div className="recipeList">
-                {recipes.length === 0 ? <div className="muted">Todavía no hay recetas.</div> : null}
+                {recipes.length === 0 ? <div className="muted">Todavía no hay fórmulas.</div> : null}
                 {recipes.map((recipe) => {
                   const product = products.find((p) => p.code === recipe.finishedProductCode)
                   return (
@@ -1071,7 +1082,7 @@ function App() {
                         />
                         <span>Exportar</span>
                       </label>
-                      <strong>{product?.description || 'Receta sin producto'}</strong>
+                      <strong>{product?.description || 'Fórmula sin producto'}</strong>
                       <span>{product?.code || 'Sin código'}</span>
                     </button>
                   )
@@ -1082,7 +1093,7 @@ function App() {
             <section className="card">
               <div className="sectionHead">
                 <div>
-                  <h2>Carga recetas</h2>
+                  <h2>Carga de fórmula</h2>
                   <p className="muted">Producto terminado, producción estimada, materias primas y costo unitario.</p>
                 </div>
                 <div className="headerActions">
@@ -1100,17 +1111,17 @@ function App() {
                     onClick={() => {
                       if (!selectedRecipe) return
                       setRecipes((prev) => prev.filter((recipe) => recipe.id !== selectedRecipe.id))
-                      setRecipeMsg('Receta eliminada.')
+                      setRecipeMsg('Fórmula eliminada.')
                     }}
                     disabled={!selectedRecipe}
                   >
-                    Eliminar receta
+                    Eliminar fórmula
                   </button>
                 </div>
               </div>
 
               {!selectedRecipe ? (
-                <div className="muted">Creá una receta para empezar.</div>
+                <div className="muted">Creá una fórmula para empezar.</div>
               ) : (
                 <>
                   {recipeMsg ? (
@@ -1180,14 +1191,13 @@ function App() {
 
                     <label className="field">
                       <span>Producción estimada</span>
-                      <input
+                      <DecimalInput
                         className="input"
-                        inputMode="decimal"
-                        value={String(selectedRecipe.productionQty)}
-                        onChange={(e) =>
+                        value={selectedRecipe.productionQty}
+                        onChange={(n) =>
                           updateRecipe((recipe) => ({
                             ...recipe,
-                            productionQty: clampNumber(Number(e.target.value)),
+                            productionQty: clampNumber(n),
                           }))
                         }
                       />
@@ -1195,14 +1205,13 @@ function App() {
 
                     <label className="field">
                       <span>% Ganancia</span>
-                      <input
+                      <DecimalInput
                         className="input"
-                        inputMode="decimal"
-                        value={String(selectedRecipe.marginPct)}
-                        onChange={(e) =>
+                        value={selectedRecipe.marginPct}
+                        onChange={(n) =>
                           updateRecipe((recipe) => ({
                             ...recipe,
-                            marginPct: clampNumber(Number(e.target.value)),
+                            marginPct: clampNumber(n),
                           }))
                         }
                       />
@@ -1267,17 +1276,14 @@ function App() {
                               ))}
                           </select>
 
-                          <input
+                          <DecimalInput
                             className="input"
-                            inputMode="decimal"
-                            value={String(line.quantity)}
-                            onChange={(e) =>
+                            value={line.quantity}
+                            onChange={(n) =>
                               updateRecipe((recipe) => ({
                                 ...recipe,
                                 lines: recipe.lines.map((item) =>
-                                  item.id === line.id
-                                    ? { ...item, quantity: clampNumber(Number(e.target.value)) }
-                                    : item,
+                                  item.id === line.id ? { ...item, quantity: clampNumber(n) } : item,
                                 ),
                               }))
                             }
@@ -1326,7 +1332,7 @@ function App() {
 
                   {recipeHasInvalidLines ? (
                     <div className="errorMsg">
-                    Revisá la receta: cada renglón debe tener una materia prima y una cantidad mayor a 0.
+                    Revisá la fórmula: cada renglón debe tener una materia prima y una cantidad mayor a 0.
                     </div>
                   ) : null}
                 </>
@@ -1371,7 +1377,7 @@ function App() {
                 ))}
               </select>
               <span className="muted smallHint">
-                Se usa para precios en la grilla de productos, costos en recetas y el número de lista en el archivo TXT.
+                Se usa para precios en la grilla de productos, costos de fórmula y el número de lista en el archivo TXT.
               </span>
             </label>
 
