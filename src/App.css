@@ -335,6 +335,13 @@
   color: var(--text);
 }
 
+.importMsg.importMsgError {
+  border-color: #b71c1c;
+  background: #c62828;
+  color: #fff;
+  font-weight: 700;
+}
+
 .errorMsg {
   margin: 0 0 12px;
   padding: 10px 12px;

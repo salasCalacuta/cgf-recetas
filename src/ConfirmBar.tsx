@@ -18,9 +18,10 @@ export function ConfirmBar({ dirty, groupName, onAccept, onCancel }: Props) {
 
   return (
     <div className="confirmBar">
-      <div className="confirmBarTitle">Confirmaciùn de cambios</div>
+      <div className="confirmBarTitle">Confirmacion de cambios</div>
       <p className="muted confirmBarHint">
-        Marcù una opciùn y pulsù <strong>Ejecutar</strong> para aplicar o descartar lo cargado o editado en esta pantalla.
+        Marcar y pulsa para <strong>Ejecutar</strong> para aplicar o descartar lo cargado o editado en esta
+        pantalla.
       </p>
       <div className="confirmBarRadios">
         <label>
@@ -30,7 +31,7 @@ export function ConfirmBar({ dirty, groupName, onAccept, onCancel }: Props) {
             checked={choice === 'accept'}
             onChange={() => setChoice('accept')}
           />
-          Aceptar y guardar (sÌ)
+          Aceptar y guardar (aceptar)
         </label>
         <label>
           <input

@@ -3,6 +3,9 @@ import { ConfirmBar } from './ConfirmBar'
 import { LoginScreen } from './LoginScreen'
 import './App.css'
 
+const MSG_RECIPE_DUPLICATE_FINISHED_PRODUCT =
+  'Ya existe una receta para ese producto terminado. Edite la existente o elija otro.'
+
 type Product = {
   id: string
   code: string
@@ -706,7 +709,7 @@ function App() {
           r.finishedProductCode.trim() !== '',
       )
     ) {
-      setRecipeMsg('Ya existe una receta para ese producto terminado. Editá la existente o elegí otro.')
+      setRecipeMsg(MSG_RECIPE_DUPLICATE_FINISHED_PRODUCT)
       return
     }
     setRecipeMsg('')
@@ -808,7 +811,7 @@ function App() {
         <div className="brand">
           <img className="logo" src={`${import.meta.env.BASE_URL}logo.svg`} alt="" />
           <div className="brandText">
-            <div className="title">Costos recetas 1.36.1</div>
+            <div className="title">Costos recetas 1.36.2</div>
           </div>
         </div>
         <button className="button secondary logoutBtn" type="button" onClick={logout}>
@@ -1110,7 +1113,17 @@ function App() {
                 <div className="muted">Creá una receta para empezar.</div>
               ) : (
                 <>
-                  {recipeMsg ? <div className="importMsg">{recipeMsg}</div> : null}
+                  {recipeMsg ? (
+                    <div
+                      className={
+                        recipeMsg === MSG_RECIPE_DUPLICATE_FINISHED_PRODUCT
+                          ? 'importMsg importMsgError'
+                          : 'importMsg'
+                      }
+                    >
+                      {recipeMsg}
+                    </div>
+                  ) : null}
 
                   <div className="toolbar">
                     <label className="field" style={{ margin: 0 }}>
